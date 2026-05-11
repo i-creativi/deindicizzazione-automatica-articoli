@@ -1,0 +1,5 @@
+# IDE / workspace (local-only)
+.idea/
+.claude/
+.playwright-mcp/
+firebase-debug.log
