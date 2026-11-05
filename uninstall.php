@@ -44,6 +44,9 @@ delete_transient( 'icrea_deindex_running' );
 wp_clear_scheduled_hook( 'icrea_deindex_cron_hook' );
 delete_post_meta_by_key( '_icrea_deindex_noindexed' );
 delete_post_meta_by_key( '_icrea_deindex_archived' );
+delete_post_meta_by_key( '_icrea_deindex_exclude' );
+delete_post_meta_by_key( '_icrea_deindex_backup' );
+delete_post_meta_by_key( '_icrea_deindex_tagged' );
 
 // Log della versione 2.3 (file in uploads), se ancora presente.
 $icrea_deindex_upload = wp_upload_dir( null, false );

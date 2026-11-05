@@ -14,6 +14,46 @@ if ( ! defined( 'ABSPATH' ) ) {
  */
 define( 'ICREA_DEINDEX_META_NOINDEXED', '_icrea_deindex_noindexed' );
 define( 'ICREA_DEINDEX_META_ARCHIVED', '_icrea_deindex_archived' );
+define( 'ICREA_DEINDEX_META_EXCLUDED', '_icrea_deindex_exclude' );
+define( 'ICREA_DEINDEX_META_BACKUP', '_icrea_deindex_backup' );
+define( 'ICREA_DEINDEX_META_TAGGED', '_icrea_deindex_tagged' );
+
+/**
+ * Capability richiesta per gestire il plugin (impostazioni, esecuzione, ripristino).
+ *
+ * @return string
+ */
+function icrea_deindex_capability() {
+	return (string) apply_filters( 'icrea_deindex_capability', 'manage_options' );
+}
+
+/**
+ * L'utente corrente può gestire la deindicizzazione di questo articolo?
+ *
+ * @param int $post_id ID articolo.
+ * @return bool
+ */
+function icrea_deindex_user_can_manage_post( $post_id ) {
+	return current_user_can( icrea_deindex_capability() ) && current_user_can( 'edit_post', $post_id );
+}
+
+/**
+ * Tipi di contenuto elaborati.
+ *
+ * @return string[]
+ */
+function icrea_deindex_post_types() {
+	return (array) apply_filters( 'icrea_deindex_post_types', array( 'post' ) );
+}
+
+/**
+ * Meta robots dei plugin SEO che il plugin modifica (e salva nel backup per il ripristino).
+ *
+ * @return string[]
+ */
+function icrea_deindex_robots_meta_keys() {
+	return array( 'rank_math_robots', '_yoast_wpseo_meta-robots-noindex', '_yoast_wpseo_meta-robots-nofollow' );
+}
 
 /**
  * Frequenze cron ammesse.
@@ -235,6 +275,15 @@ function icrea_deindex_log_as_text() {
  * @param bool $nofollow Aggiungere anche nofollow.
  */
 function icrea_deindex_apply_noindex( $post_id, $nofollow ) {
+	// Backup dei meta originali, per poter ripristinare l'articolo esattamente com'era.
+	if ( ! metadata_exists( 'post', $post_id, ICREA_DEINDEX_META_BACKUP ) ) {
+		$backup = array();
+		foreach ( icrea_deindex_robots_meta_keys() as $key ) {
+			$backup[ $key ] = metadata_exists( 'post', $post_id, $key ) ? get_post_meta( $post_id, $key, true ) : null;
+		}
+		update_post_meta( $post_id, ICREA_DEINDEX_META_BACKUP, $backup );
+	}
+
 	// Rank Math: array di direttive.
 	$robots = get_post_meta( $post_id, 'rank_math_robots', true );
 	$robots = is_array( $robots ) ? $robots : array();
@@ -314,6 +363,121 @@ function icrea_deindex_flush_sitemaps() {
 
 /*
  * -------------------------------------------------------------------------
+ * Esclusione e ripristino del singolo articolo
+ * -------------------------------------------------------------------------
+ */
+
+/**
+ * Stato dell'articolo rispetto al plugin.
+ *
+ * @param int $post_id ID articolo.
+ * @return array{noindexed:int,archived:int,excluded:bool}
+ */
+function icrea_deindex_get_post_state( $post_id ) {
+	return array(
+		'noindexed' => (int) get_post_meta( $post_id, ICREA_DEINDEX_META_NOINDEXED, true ),
+		'archived'  => (int) get_post_meta( $post_id, ICREA_DEINDEX_META_ARCHIVED, true ),
+		'excluded'  => (bool) get_post_meta( $post_id, ICREA_DEINDEX_META_EXCLUDED, true ),
+	);
+}
+
+/**
+ * Esclude (o reinclude) un articolo dall'elaborazione automatica.
+ *
+ * L'esclusione blocca solo le azioni future: un articolo già in noindex resta tale finché non viene ripristinato.
+ *
+ * @param int  $post_id  ID articolo.
+ * @param bool $excluded Escluso.
+ */
+function icrea_deindex_set_excluded( $post_id, $excluded ) {
+	if ( $excluded ) {
+		update_post_meta( $post_id, ICREA_DEINDEX_META_EXCLUDED, 1 );
+	} else {
+		delete_post_meta( $post_id, ICREA_DEINDEX_META_EXCLUDED );
+	}
+}
+
+/**
+ * Annulla quanto fatto dal plugin su un articolo: rimette i meta robots originali, ripubblica l'articolo se
+ * era stato archiviato, toglie il tag "scaduto" aggiunto dal plugin. L'articolo viene poi escluso, altrimenti
+ * la prossima esecuzione lo rimetterebbe subito in noindex.
+ *
+ * @param int $post_id ID articolo.
+ * @return true|WP_Error
+ */
+function icrea_deindex_restore_post( $post_id ) {
+	$post  = get_post( $post_id );
+	$state = $post ? icrea_deindex_get_post_state( $post_id ) : null;
+	if ( ! $post || ( ! $state['noindexed'] && ! $state['archived'] ) ) {
+		return new WP_Error( 'icrea_deindex_not_processed', __( 'Questo articolo non è stato elaborato dal plugin.', 'deindicizzazione-automatica-articoli' ) );
+	}
+
+	if ( $state['noindexed'] ) {
+		$backup = get_post_meta( $post_id, ICREA_DEINDEX_META_BACKUP, true );
+		if ( is_array( $backup ) ) {
+			foreach ( icrea_deindex_robots_meta_keys() as $key ) {
+				if ( ! array_key_exists( $key, $backup ) || null === $backup[ $key ] ) {
+					delete_post_meta( $post_id, $key );
+				} else {
+					update_post_meta( $post_id, $key, $backup[ $key ] );
+				}
+			}
+		} else {
+			// Articoli elaborati dalla 2.4.0, che non salvava il backup: si toglie solo ciò che aggiunge il plugin.
+			$nofollow = (bool) get_option( 'icrea_deindex_nofollow', 0 );
+			$robots   = get_post_meta( $post_id, 'rank_math_robots', true );
+			if ( is_array( $robots ) ) {
+				$robots = array_values( array_diff( $robots, $nofollow ? array( 'noindex', 'nofollow' ) : array( 'noindex' ) ) );
+				if ( $robots ) {
+					update_post_meta( $post_id, 'rank_math_robots', $robots );
+				} else {
+					delete_post_meta( $post_id, 'rank_math_robots' );
+				}
+			}
+			delete_post_meta( $post_id, '_yoast_wpseo_meta-robots-noindex' );
+			if ( $nofollow ) {
+				delete_post_meta( $post_id, '_yoast_wpseo_meta-robots-nofollow' );
+			}
+		}
+		icrea_deindex_refresh_yoast_indexable( $post_id );
+	}
+
+	if ( $state['archived'] && array_key_exists( $post->post_status, icrea_deindex_archive_statuses() ) ) {
+		$result = wp_update_post(
+			array(
+				'ID'          => $post_id,
+				'post_status' => 'publish',
+			),
+			true
+		);
+		if ( is_wp_error( $result ) ) {
+			return $result;
+		}
+	}
+
+	if ( get_post_meta( $post_id, ICREA_DEINDEX_META_TAGGED, true ) ) {
+		wp_remove_object_terms( $post_id, 'scaduto', 'post_tag' );
+	}
+
+	foreach ( array( ICREA_DEINDEX_META_NOINDEXED, ICREA_DEINDEX_META_ARCHIVED, ICREA_DEINDEX_META_BACKUP, ICREA_DEINDEX_META_TAGGED ) as $key ) {
+		delete_post_meta( $post_id, $key );
+	}
+	icrea_deindex_set_excluded( $post_id, true );
+
+	if ( get_option( 'icrea_deindex_regenerate_sitemap', 0 ) ) {
+		icrea_deindex_flush_sitemaps();
+	}
+
+	/* translators: 1: titolo articolo, 2: ID */
+	icrea_deindex_log_add( sprintf( __( 'Ripristinato ed escluso: "%1$s" (ID %2$d).', 'deindicizzazione-automatica-articoli' ), icrea_deindex_plain_title( $post_id ), $post_id ) );
+
+	do_action( 'icrea_deindex_post_restored', $post_id );
+
+	return true;
+}
+
+/*
+ * -------------------------------------------------------------------------
  * Elaborazione
  * -------------------------------------------------------------------------
  */
@@ -328,14 +492,45 @@ function icrea_deindex_flush_sitemaps() {
  * @return int[]
  */
 function icrea_deindex_find_posts( $days, $category_ids, $exclude_meta, $limit ) {
+	$result = icrea_deindex_query_posts( $days, $category_ids, $exclude_meta, $limit, false );
+	return $result['ids'];
+}
+
+/**
+ * Come icrea_deindex_find_posts(), con il totale degli articoli trovati (per l'anteprima).
+ *
+ * Gli articoli esclusi manualmente non vengono mai restituiti.
+ *
+ * @param int    $days         Giorni.
+ * @param int[]  $category_ids Categorie.
+ * @param string $exclude_meta Meta marcatore da escludere ('' = nessuno).
+ * @param int    $limit        Numero massimo di articoli.
+ * @param bool   $with_total   Calcolare il totale.
+ * @return array{ids:int[],total:int}
+ */
+function icrea_deindex_query_posts( $days, $category_ids, $exclude_meta, $limit, $with_total ) {
+	$meta_query = array(
+		array(
+			'key'     => ICREA_DEINDEX_META_EXCLUDED,
+			'compare' => 'NOT EXISTS',
+		),
+	);
+	if ( $exclude_meta ) {
+		$meta_query[] = array(
+			'key'     => $exclude_meta,
+			'compare' => 'NOT EXISTS',
+		);
+	}
+
 	$args = array(
-		'post_type'           => apply_filters( 'icrea_deindex_post_types', array( 'post' ) ),
+		'post_type'           => icrea_deindex_post_types(),
 		'post_status'         => 'publish',
 		'fields'              => 'ids',
 		'posts_per_page'      => $limit,
 		'orderby'             => 'date',
 		'order'               => 'ASC',
-		'no_found_rows'       => true,
+		'no_found_rows'       => ! $with_total,
+		'meta_query'          => $meta_query, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
 		'ignore_sticky_posts' => true,
 		'tax_query'           => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_tax_query
 			array(
@@ -353,15 +548,6 @@ function icrea_deindex_find_posts( $days, $category_ids, $exclude_meta, $limit )
 		),
 	);
 
-	if ( $exclude_meta ) {
-		$args['meta_query'] = array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
-			array(
-				'key'     => $exclude_meta,
-				'compare' => 'NOT EXISTS',
-			),
-		);
-	}
-
 	$authors = array_filter( array_map( 'absint', (array) get_option( 'icrea_deindex_authors', array() ) ) );
 	if ( $authors ) {
 		if ( 'include' === get_option( 'icrea_deindex_authors_mode', 'exclude' ) ) {
@@ -372,7 +558,85 @@ function icrea_deindex_find_posts( $days, $category_ids, $exclude_meta, $limit )
 	}
 
 	$query = new WP_Query( apply_filters( 'icrea_deindex_query_args', $args, $days, $exclude_meta ) );
-	return array_map( 'intval', $query->posts );
+	$ids   = array_map( 'intval', $query->posts );
+	return array(
+		'ids'   => $ids,
+		'total' => $with_total ? (int) $query->found_posts : count( $ids ),
+	);
+}
+
+/**
+ * Anteprima della prossima esecuzione: articoli che verrebbero messi in noindex e archiviati.
+ *
+ * @param int $limit Numero massimo di articoli elencati per azione.
+ * @return array|null null se non ci sono categorie configurate.
+ */
+function icrea_deindex_preview( $limit = 50 ) {
+	$category_ids = icrea_deindex_get_category_ids();
+	if ( ! $category_ids ) {
+		return null;
+	}
+	$days         = absint( get_option( 'icrea_deindex_days', 7 ) );
+	$archive_days = absint( get_option( 'icrea_deindex_archive_days', 0 ) );
+	$empty        = array(
+		'ids'   => array(),
+		'total' => 0,
+	);
+
+	return array(
+		'deindex' => $days > 0 ? icrea_deindex_query_posts( $days, $category_ids, ICREA_DEINDEX_META_NOINDEXED, $limit, true ) : $empty,
+		'archive' => $archive_days > 0 ? icrea_deindex_query_posts( $archive_days, $category_ids, '', $limit, true ) : $empty,
+	);
+}
+
+/**
+ * Articoli con un certo marcatore (elaborati o esclusi), dal più recente, paginati.
+ *
+ * @param string $which    'processed' (noindex o archiviati) oppure 'excluded'.
+ * @param int    $page     Pagina (da 1).
+ * @param int    $per_page Articoli per pagina.
+ * @return array{ids:int[],total:int,pages:int}
+ */
+function icrea_deindex_get_marked_posts( $which, $page = 1, $per_page = 50 ) {
+	if ( 'excluded' === $which ) {
+		$meta_query = array(
+			array(
+				'key'     => ICREA_DEINDEX_META_EXCLUDED,
+				'compare' => 'EXISTS',
+			),
+		);
+	} else {
+		$meta_query = array(
+			'relation' => 'OR',
+			array(
+				'key'     => ICREA_DEINDEX_META_NOINDEXED,
+				'compare' => 'EXISTS',
+			),
+			array(
+				'key'     => ICREA_DEINDEX_META_ARCHIVED,
+				'compare' => 'EXISTS',
+			),
+		);
+	}
+
+	$query = new WP_Query(
+		array(
+			'post_type'      => icrea_deindex_post_types(),
+			'post_status'    => array( 'publish', 'draft', 'private', 'pending', 'future' ),
+			'fields'         => 'ids',
+			'posts_per_page' => $per_page,
+			'paged'          => max( 1, (int) $page ),
+			'orderby'        => 'date',
+			'order'          => 'DESC',
+			'meta_query'     => $meta_query, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+		)
+	);
+
+	return array(
+		'ids'   => array_map( 'intval', $query->posts ),
+		'total' => (int) $query->found_posts,
+		'pages' => (int) $query->max_num_pages,
+	);
 }
 
 /**
@@ -391,9 +655,25 @@ function icrea_deindex_plain_title( $post_id ) {
  * Ogni articolo viene trattato una sola volta: quelli già messi in noindex sono marcati e non vengono
  * più elaborati, così email, contatore e sitemap riguardano solo le novità.
  *
- * @return array|null Riepilogo dell'esecuzione, null se non c'è nulla da fare.
+ * @param array $options {
+ *     Opzioni (il cron non ne passa: WordPress chiama la callback con una stringa vuota).
+ *
+ *     @type bool|null $dry_run Forza (o disattiva) la simulazione; null = impostazione salvata.
+ *     @type string    $source  'cron', 'manual' o 'cli' (compare nel log).
+ *     @type bool      $email   Inviare l'email di notifica.
+ * }
+ * @return array|null Riepilogo dell'esecuzione, null se non ci sono categorie o un'esecuzione è già in corso.
  */
-function icrea_deindex_old_articles() {
+function icrea_deindex_old_articles( $options = array() ) {
+	$options = wp_parse_args(
+		is_array( $options ) ? $options : array(),
+		array(
+			'dry_run' => null,
+			'source'  => 'cron',
+			'email'   => true,
+		)
+	);
+
 	$category_ids = icrea_deindex_get_category_ids();
 	if ( empty( $category_ids ) ) {
 		return null;
@@ -407,13 +687,14 @@ function icrea_deindex_old_articles() {
 	$days           = absint( get_option( 'icrea_deindex_days', 7 ) );
 	$archive_days   = absint( get_option( 'icrea_deindex_archive_days', 0 ) );
 	$archive_status = icrea_deindex_get_archive_status();
-	$dry_run        = (bool) get_option( 'icrea_deindex_dry_run', 0 );
+	$dry_run        = null === $options['dry_run'] ? (bool) get_option( 'icrea_deindex_dry_run', 0 ) : (bool) $options['dry_run'];
 	$nofollow       = (bool) get_option( 'icrea_deindex_nofollow', 0 );
 	$add_tag        = (bool) get_option( 'icrea_deindex_add_expired_tag', 0 );
 	$limit          = max( 1, (int) apply_filters( 'icrea_deindex_batch_size', 200 ) );
 
 	$summary = array(
 		'dry_run'     => $dry_run,
+		'source'      => sanitize_key( $options['source'] ),
 		'deindexed'   => array(),
 		'archived'    => array(),
 		'tagged'      => array(),
@@ -427,7 +708,8 @@ function icrea_deindex_old_articles() {
 		foreach ( $ids as $post_id ) {
 			if ( ! $dry_run ) {
 				icrea_deindex_apply_noindex( $post_id, $nofollow );
-				if ( $add_tag && ! is_wp_error( wp_set_post_tags( $post_id, 'scaduto', true ) ) ) {
+				if ( $add_tag && ! has_tag( 'scaduto', $post_id ) && ! is_wp_error( wp_set_post_tags( $post_id, 'scaduto', true ) ) ) {
+					update_post_meta( $post_id, ICREA_DEINDEX_META_TAGGED, 1 );
 					$summary['tagged'][] = $post_id;
 				}
 			}
@@ -463,7 +745,9 @@ function icrea_deindex_old_articles() {
 		if ( ! $dry_run ) {
 			update_option( 'icrea_deindex_processed_count', (int) get_option( 'icrea_deindex_processed_count', 0 ) + $touched );
 		}
-		icrea_deindex_send_email( $summary, $category_ids, $days, $archive_status );
+		if ( $options['email'] ) {
+			icrea_deindex_send_email( $summary, $category_ids, $days, $archive_status );
+		}
 		if ( ! $dry_run && get_option( 'icrea_deindex_regenerate_sitemap', 0 ) ) {
 			icrea_deindex_flush_sitemaps();
 		}
@@ -493,6 +777,11 @@ function icrea_deindex_old_articles() {
  */
 function icrea_deindex_summary_message( $summary, $category_ids, $days, $archive_days ) {
 	$parts = array();
+	if ( isset( $summary['source'] ) && 'manual' === $summary['source'] ) {
+		$parts[] = __( '[MANUALE]', 'deindicizzazione-automatica-articoli' );
+	} elseif ( isset( $summary['source'] ) && 'cli' === $summary['source'] ) {
+		$parts[] = '[WP-CLI]';
+	}
 	if ( $summary['dry_run'] ) {
 		$parts[] = __( '[SIMULAZIONE]', 'deindicizzazione-automatica-articoli' );
 	}
@@ -588,7 +877,7 @@ function icrea_deindex_default_email_template() {
  * Registra il widget della dashboard.
  */
 function icrea_deindex_add_dashboard_widget() {
-	if ( ! current_user_can( 'manage_options' ) ) {
+	if ( ! current_user_can( icrea_deindex_capability() ) ) {
 		return;
 	}
 	wp_add_dashboard_widget(

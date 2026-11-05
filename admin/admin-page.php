@@ -10,7 +10,7 @@ function icrea_deindex_admin_menu() {
 	add_menu_page(
 		__( 'Deindex Articoli', 'deindicizzazione-automatica-articoli' ),
 		__( 'Deindex Articoli', 'deindicizzazione-automatica-articoli' ),
-		'manage_options',
+		icrea_deindex_capability(),
 		'icrea-deindex-articoli',
 		'icrea_deindex_settings_page',
 		'dashicons-hidden'
@@ -34,8 +34,8 @@ add_action( 'admin_enqueue_scripts', 'icrea_deindex_admin_assets' );
  * Salvataggio delle impostazioni (admin-post).
  */
 function icrea_deindex_handle_save() {
-	if ( ! current_user_can( 'manage_options' ) ) {
-		wp_die( esc_html__( 'Non hai i permessi per modificare queste impostazioni.', 'deindicizzazione-automatica-articoli' ) );
+	if ( ! current_user_can( icrea_deindex_capability() ) ) {
+		wp_die( esc_html__( 'Non hai i permessi per modificare queste impostazioni.', 'deindicizzazione-automatica-articoli' ), '', array( 'response' => 403 ) );
 	}
 	check_admin_referer( 'icrea_deindex_save', 'icrea_deindex_nonce' );
 
@@ -88,8 +88,8 @@ add_action( 'admin_post_icrea_deindex_save', 'icrea_deindex_handle_save' );
  * Azioni sul log: svuota / scarica (admin-post).
  */
 function icrea_deindex_handle_log_action() {
-	if ( ! current_user_can( 'manage_options' ) ) {
-		wp_die( esc_html__( 'Non hai i permessi per questa operazione.', 'deindicizzazione-automatica-articoli' ) );
+	if ( ! current_user_can( icrea_deindex_capability() ) ) {
+		wp_die( esc_html__( 'Non hai i permessi per questa operazione.', 'deindicizzazione-automatica-articoli' ), '', array( 'response' => 403 ) );
 	}
 	check_admin_referer( 'icrea_log_action', 'icrea_log_nonce' );
 
@@ -113,15 +113,239 @@ function icrea_deindex_handle_log_action() {
 add_action( 'admin_post_icrea_deindex_log', 'icrea_deindex_handle_log_action' );
 
 /**
- * Pagina delle impostazioni.
+ * "Esegui ora" (admin-post): lancia subito un'esecuzione con le impostazioni salvate.
  */
-function icrea_deindex_settings_page() {
-	if ( ! current_user_can( 'manage_options' ) ) {
+function icrea_deindex_handle_run() {
+	if ( ! current_user_can( icrea_deindex_capability() ) ) {
+		wp_die( esc_html__( 'Non hai i permessi per questa operazione.', 'deindicizzazione-automatica-articoli' ), '', array( 'response' => 403 ) );
+	}
+	check_admin_referer( 'icrea_deindex_run', 'icrea_deindex_run_nonce' );
+
+	$args = array(
+		'page' => 'icrea-deindex-articoli',
+		'tab'  => 'posts',
+	);
+
+	if ( ! icrea_deindex_get_category_ids() ) {
+		$args['run'] = 'nocat';
+	} elseif ( get_transient( 'icrea_deindex_running' ) ) {
+		$args['run'] = 'busy';
+	} else {
+		$summary = icrea_deindex_old_articles( array( 'source' => 'manual' ) );
+		if ( is_array( $summary ) ) {
+			$args['run']  = 'done';
+			$args['nd']   = count( $summary['deindexed'] );
+			$args['na']   = count( $summary['archived'] );
+			$args['dry']  = (int) $summary['dry_run'];
+			$args['more'] = (int) $summary['more_queued'];
+		} else {
+			$args['run'] = 'busy';
+		}
+	}
+
+	wp_safe_redirect( add_query_arg( $args, admin_url( 'admin.php' ) ) );
+	exit;
+}
+add_action( 'admin_post_icrea_deindex_run', 'icrea_deindex_handle_run' );
+
+/**
+ * Esito di "Esegui ora".
+ */
+function icrea_deindex_render_run_notice() {
+	// phpcs:disable WordPress.Security.NonceVerification.Recommended -- solo visualizzazione dell'esito.
+	$run = isset( $_GET['run'] ) ? sanitize_key( wp_unslash( $_GET['run'] ) ) : '';
+	if ( 'nocat' === $run ) {
+		echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html__( 'Nessuna categoria selezionata: non c\'è nulla da elaborare.', 'deindicizzazione-automatica-articoli' ) . '</p></div>';
+	} elseif ( 'busy' === $run ) {
+		echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html__( 'Un\'esecuzione è già in corso. Riprova tra qualche minuto.', 'deindicizzazione-automatica-articoli' ) . '</p></div>';
+	} elseif ( 'done' === $run ) {
+		$deindexed = isset( $_GET['nd'] ) ? absint( $_GET['nd'] ) : 0;
+		$archived  = isset( $_GET['na'] ) ? absint( $_GET['na'] ) : 0;
+		$message   = sprintf(
+			/* translators: 1: articoli deindicizzati, 2: articoli archiviati */
+			__( 'Esecuzione completata: %1$d articoli messi in noindex, %2$d archiviati.', 'deindicizzazione-automatica-articoli' ),
+			$deindexed,
+			$archived
+		);
+		if ( ! empty( $_GET['dry'] ) ) {
+			$message = __( '[SIMULAZIONE] Nessun articolo è stato modificato.', 'deindicizzazione-automatica-articoli' ) . ' ' . $message;
+		}
+		if ( ! empty( $_GET['more'] ) ) {
+			$message .= ' ' . __( 'Altri articoli sono in coda: verranno elaborati alla prossima esecuzione.', 'deindicizzazione-automatica-articoli' );
+		}
+		echo '<div class="notice notice-success is-dismissible"><p>' . esc_html( $message ) . '</p></div>';
+	}
+	// phpcs:enable
+}
+
+/**
+ * Scheda Articoli: anteprima della prossima esecuzione, articoli elaborati ed esclusi.
+ */
+function icrea_deindex_render_posts_tab() {
+	$preview  = icrea_deindex_preview( 50 );
+	$next_run = wp_next_scheduled( 'icrea_deindex_cron_hook' );
+
+	echo '<div class="icrea-posts-container">';
+
+	// Esegui ora.
+	echo '<div class="icrea-stats-box icrea-run-box">';
+	echo '<form method="post" action="' . esc_url( admin_url( 'admin-post.php' ) ) . '">';
+	echo '<input type="hidden" name="action" value="icrea_deindex_run">';
+	wp_nonce_field( 'icrea_deindex_run', 'icrea_deindex_run_nonce' );
+	echo '<button type="submit" class="button button-primary"' . disabled( null === $preview, true, false ) . '>' . esc_html__( 'Esegui ora', 'deindicizzazione-automatica-articoli' ) . '</button> ';
+	if ( $next_run ) {
+		/* translators: %s: data e ora */
+		echo '<span class="description">' . esc_html( sprintf( __( 'Prossima esecuzione automatica: %s', 'deindicizzazione-automatica-articoli' ), wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $next_run ) ) ) . '</span>';
+	}
+	if ( get_option( 'icrea_deindex_dry_run', 0 ) ) {
+		echo '<p><strong>' . esc_html__( 'Modalità simulazione attiva: l\'esecuzione non modificherà gli articoli.', 'deindicizzazione-automatica-articoli' ) . '</strong></p>';
+	}
+	echo '</form>';
+	echo '</div>';
+
+	// Anteprima.
+	echo '<h2>' . esc_html__( 'Anteprima della prossima esecuzione', 'deindicizzazione-automatica-articoli' ) . '</h2>';
+	if ( null === $preview ) {
+		echo '<p>' . esc_html__( 'Nessuna categoria selezionata: seleziona almeno una categoria nelle impostazioni.', 'deindicizzazione-automatica-articoli' ) . '</p>';
+	} else {
+		$batch = max( 1, (int) apply_filters( 'icrea_deindex_batch_size', 200 ) );
+
+		/* translators: %d: numero articoli */
+		echo '<h3>' . esc_html( sprintf( __( 'Da mettere in noindex (%d)', 'deindicizzazione-automatica-articoli' ), $preview['deindex']['total'] ) ) . '</h3>';
+		icrea_deindex_render_posts_table( $preview['deindex']['ids'], 'preview', $preview['deindex']['total'] );
+
+		if ( absint( get_option( 'icrea_deindex_archive_days', 0 ) ) > 0 ) {
+			/* translators: %d: numero articoli */
+			echo '<h3>' . esc_html( sprintf( __( 'Da archiviare (%d)', 'deindicizzazione-automatica-articoli' ), $preview['archive']['total'] ) ) . '</h3>';
+			icrea_deindex_render_posts_table( $preview['archive']['ids'], 'preview', $preview['archive']['total'] );
+		}
+
+		if ( max( $preview['deindex']['total'], $preview['archive']['total'] ) > $batch ) {
+			/* translators: %d: articoli per esecuzione */
+			echo '<p class="description">' . esc_html( sprintf( __( 'Ogni esecuzione elabora al massimo %d articoli per azione: i restanti vengono elaborati nelle esecuzioni successive.', 'deindicizzazione-automatica-articoli' ), $batch ) ) . '</p>';
+		}
+	}
+
+	// Elaborati.
+	// phpcs:ignore WordPress.Security.NonceVerification.Recommended -- paginazione.
+	$page      = isset( $_GET['pdone'] ) ? max( 1, absint( $_GET['pdone'] ) ) : 1;
+	$processed = icrea_deindex_get_marked_posts( 'processed', $page, 50 );
+	/* translators: %d: numero articoli */
+	echo '<h2>' . esc_html( sprintf( __( 'Articoli elaborati (%d)', 'deindicizzazione-automatica-articoli' ), $processed['total'] ) ) . '</h2>';
+	echo '<p class="description">' . esc_html__( '"Ripristina" rimette i meta robots originali, ripubblica l\'articolo se era stato archiviato e lo esclude dalle esecuzioni future.', 'deindicizzazione-automatica-articoli' ) . '</p>';
+	icrea_deindex_render_posts_table( $processed['ids'], 'processed', $processed['total'] );
+	if ( $processed['pages'] > 1 ) {
+		echo '<div class="tablenav"><div class="tablenav-pages">';
+		echo wp_kses_post(
+			paginate_links(
+				array(
+					'base'    => add_query_arg( 'pdone', '%#%' ),
+					'format'  => '',
+					'current' => $page,
+					'total'   => $processed['pages'],
+				)
+			)
+		);
+		echo '</div></div>';
+	}
+
+	// Esclusi.
+	$excluded = icrea_deindex_get_marked_posts( 'excluded', 1, 100 );
+	/* translators: %d: numero articoli */
+	echo '<h2>' . esc_html( sprintf( __( 'Articoli esclusi (%d)', 'deindicizzazione-automatica-articoli' ), $excluded['total'] ) ) . '</h2>';
+	echo '<p class="description">' . esc_html__( 'Gli articoli esclusi non vengono mai messi in noindex né archiviati. Puoi escludere un articolo anche dal riquadro "Deindicizzazione automatica" nella sua pagina di modifica.', 'deindicizzazione-automatica-articoli' ) . '</p>';
+	icrea_deindex_render_posts_table( $excluded['ids'], 'excluded', $excluded['total'] );
+
+	echo '</div>';
+}
+
+/**
+ * Tabella di articoli con le azioni disponibili.
+ *
+ * @param int[]  $ids   ID articoli.
+ * @param string $mode  'preview', 'processed' o 'excluded'.
+ * @param int    $total Totale (per indicare quanti non sono elencati).
+ */
+function icrea_deindex_render_posts_table( $ids, $mode, $total ) {
+	if ( ! $ids ) {
+		echo '<p>' . esc_html__( 'Nessun articolo.', 'deindicizzazione-automatica-articoli' ) . '</p>';
 		return;
 	}
 
+	$date_format = get_option( 'date_format' );
+	$statuses    = get_post_statuses();
+
+	echo '<table class="widefat striped icrea-posts-table"><thead><tr>';
+	echo '<th>' . esc_html__( 'Titolo', 'deindicizzazione-automatica-articoli' ) . '</th>';
+	echo '<th>' . esc_html__( 'Pubblicato', 'deindicizzazione-automatica-articoli' ) . '</th>';
+	if ( 'processed' === $mode ) {
+		echo '<th>' . esc_html__( 'Stato', 'deindicizzazione-automatica-articoli' ) . '</th>';
+		echo '<th>' . esc_html__( 'Noindex', 'deindicizzazione-automatica-articoli' ) . '</th>';
+		echo '<th>' . esc_html__( 'Archiviato', 'deindicizzazione-automatica-articoli' ) . '</th>';
+	} else {
+		echo '<th>' . esc_html__( 'Categorie', 'deindicizzazione-automatica-articoli' ) . '</th>';
+	}
+	echo '<th>' . esc_html__( 'Azioni', 'deindicizzazione-automatica-articoli' ) . '</th>';
+	echo '</tr></thead><tbody>';
+
+	foreach ( $ids as $post_id ) {
+		$state = icrea_deindex_get_post_state( $post_id );
+		$link  = get_edit_post_link( $post_id );
+		$title = icrea_deindex_plain_title( $post_id );
+		$title = '' !== $title ? $title : __( '(senza titolo)', 'deindicizzazione-automatica-articoli' );
+
+		echo '<tr>';
+		echo '<td>' . ( $link ? '<a href="' . esc_url( $link ) . '">' . esc_html( $title ) . '</a>' : esc_html( $title ) ) . '</td>';
+		echo '<td>' . esc_html( get_the_date( $date_format, $post_id ) ) . '</td>';
+
+		if ( 'processed' === $mode ) {
+			$status = get_post_status( $post_id );
+			echo '<td>' . esc_html( isset( $statuses[ $status ] ) ? $statuses[ $status ] : $status ) . '</td>';
+			echo '<td>' . ( $state['noindexed'] ? esc_html( wp_date( $date_format, $state['noindexed'] ) ) : '&mdash;' ) . '</td>';
+			echo '<td>' . ( $state['archived'] ? esc_html( wp_date( $date_format, $state['archived'] ) ) : '&mdash;' ) . '</td>';
+		} else {
+			echo '<td>' . esc_html( implode( ', ', wp_list_pluck( get_the_category( $post_id ), 'name' ) ) ) . '</td>';
+		}
+
+		echo '<td>';
+		if ( icrea_deindex_user_can_manage_post( $post_id ) ) {
+			if ( 'processed' === $mode ) {
+				echo '<a class="button button-small" href="' . esc_url( icrea_deindex_post_action_url( $post_id, 'restore' ) ) . '" onclick="return confirm(\'' . esc_js( __( 'Ripristinare l\'indicizzazione di questo articolo?', 'deindicizzazione-automatica-articoli' ) ) . '\');">' . esc_html__( 'Ripristina', 'deindicizzazione-automatica-articoli' ) . '</a>';
+			} elseif ( 'excluded' === $mode ) {
+				echo '<a class="button button-small" href="' . esc_url( icrea_deindex_post_action_url( $post_id, 'include' ) ) . '">' . esc_html__( 'Togli esclusione', 'deindicizzazione-automatica-articoli' ) . '</a>';
+			} else {
+				echo '<a class="button button-small" href="' . esc_url( icrea_deindex_post_action_url( $post_id, 'exclude' ) ) . '">' . esc_html__( 'Escludi', 'deindicizzazione-automatica-articoli' ) . '</a>';
+			}
+		}
+		echo '</td>';
+		echo '</tr>';
+	}
+
+	echo '</tbody></table>';
+
+	if ( 'processed' !== $mode && $total > count( $ids ) ) {
+		/* translators: %d: numero articoli non elencati */
+		echo '<p class="description">' . esc_html( sprintf( __( '...e altri %d articoli.', 'deindicizzazione-automatica-articoli' ), $total - count( $ids ) ) ) . '</p>';
+	}
+}
+
+/**
+ * Pagina delle impostazioni.
+ */
+function icrea_deindex_settings_page() {
+	if ( ! current_user_can( icrea_deindex_capability() ) ) {
+		return;
+	}
+
+	$tabs = array(
+		'settings' => __( 'Impostazioni', 'deindicizzazione-automatica-articoli' ),
+		'posts'    => __( 'Articoli', 'deindicizzazione-automatica-articoli' ),
+		'logs'     => __( 'Log', 'deindicizzazione-automatica-articoli' ),
+	);
+
 	// phpcs:disable WordPress.Security.NonceVerification.Recommended -- solo lettura di parametri di navigazione.
-	$current_tab = isset( $_GET['tab'] ) && 'logs' === $_GET['tab'] ? 'logs' : 'settings';
+	$current_tab = isset( $_GET['tab'] ) ? sanitize_key( wp_unslash( $_GET['tab'] ) ) : 'settings';
+	$current_tab = array_key_exists( $current_tab, $tabs ) ? $current_tab : 'settings';
 	$saved       = isset( $_GET['saved'] );
 	$cleared     = isset( $_GET['cleared'] );
 	// phpcs:enable
@@ -136,14 +360,19 @@ function icrea_deindex_settings_page() {
 	if ( $cleared ) {
 		echo '<div class="notice notice-success is-dismissible"><p>' . esc_html__( 'Log svuotato con successo.', 'deindicizzazione-automatica-articoli' ) . '</p></div>';
 	}
+	icrea_deindex_render_run_notice();
 
 	echo '<nav class="nav-tab-wrapper">';
-	echo '<a href="' . esc_url( $page_url ) . '" class="nav-tab' . ( 'settings' === $current_tab ? ' nav-tab-active' : '' ) . '">' . esc_html__( 'Impostazioni', 'deindicizzazione-automatica-articoli' ) . '</a>';
-	echo '<a href="' . esc_url( add_query_arg( 'tab', 'logs', $page_url ) ) . '" class="nav-tab' . ( 'logs' === $current_tab ? ' nav-tab-active' : '' ) . '">' . esc_html__( 'Log', 'deindicizzazione-automatica-articoli' ) . '</a>';
+	foreach ( $tabs as $slug => $label ) {
+		$url = 'settings' === $slug ? $page_url : add_query_arg( 'tab', $slug, $page_url );
+		echo '<a href="' . esc_url( $url ) . '" class="nav-tab' . ( $current_tab === $slug ? ' nav-tab-active' : '' ) . '">' . esc_html( $label ) . '</a>';
+	}
 	echo '</nav>';
 
 	if ( 'logs' === $current_tab ) {
 		icrea_deindex_render_logs_tab();
+	} elseif ( 'posts' === $current_tab ) {
+		icrea_deindex_render_posts_tab();
 	} else {
 		icrea_deindex_render_settings_tab();
 	}

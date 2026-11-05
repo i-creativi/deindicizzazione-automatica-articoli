@@ -75,3 +75,23 @@
 	margin-top: 12px;
 	text-align: right;
 }
+
+/* Scheda Articoli */
+.icrea-posts-container {
+	margin-top: 15px;
+}
+.icrea-run-box form {
+	margin: 0;
+}
+.icrea-run-box p {
+	margin: 8px 0 0;
+}
+.icrea-posts-table {
+	margin-bottom: 8px;
+}
+.icrea-posts-table td {
+	vertical-align: middle;
+}
+.icrea-posts-container h2 {
+	margin-top: 28px;
+}

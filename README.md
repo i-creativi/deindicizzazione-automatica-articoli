@@ -21,6 +21,10 @@ Deindicizzazione Automatica Articoli è un plugin completo per la gestione SEO d
 - **Frequenza cron configurabile**: scegli tra esecuzione oraria, giornaliera o settimanale
 - **Tag "scaduto"**: opzione per aggiungere automaticamente un tag agli articoli vecchi
 - **Aggiornamento sitemap**: svuota la cache delle sitemap di Rank Math e Yoast SEO
+- **Anteprima ed "Esegui ora"**: la scheda Articoli mostra cosa verrà elaborato alla prossima esecuzione e permette di lanciarla subito
+- **Esclusione del singolo articolo**: dal riquadro "Deindicizzazione automatica" nell'editor o dall'anteprima
+- **Ripristino**: annulla noindex, archiviazione e tag "scaduto" su un articolo, rimettendo i meta robots originali
+- **WP-CLI**: `wp deindex status|preview|run|restore|exclude|include|list`
 
 ## Requisiti
 
@@ -69,6 +73,24 @@ Una volta configurato, il plugin funziona automaticamente in background secondo 
 1. **Dashboard Widget**: visualizza statistiche e prossime azioni pianificate
 2. **Pagina Log**: accedi a WP Admin > Deindex Articoli > Log per visualizzare lo storico delle operazioni
 3. **Email di notifica**: ricevi notifiche via email quando gli articoli vengono processati
+4. **Scheda Articoli**: WP Admin > Deindex Articoli > Articoli mostra l'anteprima della prossima esecuzione, gli articoli elaborati (con "Ripristina") e quelli esclusi; il pulsante **Esegui ora** lancia subito un'esecuzione
+
+### Escludere o ripristinare un articolo
+
+- **Escludere**: spunta "Escludi dalla deindicizzazione automatica" nel riquadro dell'editor, oppure usa "Escludi" nell'anteprima. L'articolo non verrà mai messo in noindex né archiviato.
+- **Ripristinare**: "Ripristina indicizzazione" (riquadro dell'editor, lista articoli o scheda Articoli) rimette i meta robots com'erano prima, ripubblica l'articolo se era stato archiviato, toglie il tag "scaduto" aggiunto dal plugin e lo esclude, così la prossima esecuzione non lo rimette in noindex.
+
+### WP-CLI
+
+```bash
+wp deindex status                       # configurazione e stato
+wp deindex preview [--format=ids]       # cosa verrebbe elaborato
+wp deindex run [--dry-run] [--no-email] # esecuzione immediata
+wp deindex restore <id>...              # ripristina ed esclude
+wp deindex exclude <id>...              # esclude
+wp deindex include <id>...              # toglie l'esclusione
+wp deindex list [--excluded]            # articoli elaborati / esclusi
+```
 
 ## Risoluzione problemi
 
@@ -114,8 +136,18 @@ Fino alla 2.3.1 il noindex di Rank Math veniva salvato in un formato che Rank Ma
 - `icrea_deindex_query_args`: argomenti della WP_Query
 - `icrea_deindex_log_limit`: voci di log conservate (default 200)
 - `icrea_deindex_after_run`: azione dopo ogni esecuzione, con il riepilogo
+- `icrea_deindex_post_restored`: azione dopo il ripristino di un articolo
+- `icrea_deindex_capability`: capability richiesta per gestire il plugin (default `manage_options`)
 
 ## Changelog
+
+### 2.5.0
+- Nuovo: scheda Articoli con anteprima della prossima esecuzione, articoli elaborati ed esclusi
+- Nuovo: pulsante "Esegui ora"
+- Nuovo: esclusione del singolo articolo (riquadro nell'editor, anteprima, WP-CLI)
+- Nuovo: ripristino dell'articolo (meta robots originali, ripubblicazione, rimozione del tag "scaduto")
+- Nuovo: comandi WP-CLI `wp deindex`
+- Il tag "scaduto" viene tolto al ripristino solo se l'ha aggiunto il plugin
 
 ### 2.4.0
 - Fix: il noindex di Rank Math veniva serializzato due volte e ignorato, quindi gli articoli non venivano mai deindicizzati; i valori rotti vengono ripuliti all'aggiornamento

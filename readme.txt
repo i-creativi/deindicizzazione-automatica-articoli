@@ -4,7 +4,7 @@ Tags: seo, noindex, rank math, yoast, archive
 Requires at least: 5.7
 Tested up to: 7.1
 Requires PHP: 7.2
-Stable tag: 2.4.0
+Stable tag: 2.5.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -32,6 +32,10 @@ The admin interface is in Italian.
 * Optional "scaduto" (expired) tag on old posts
 * Sitemap cache refresh for Rank Math and Yoast SEO
 * Large sites friendly: posts are processed in batches
+* Preview of the next run and a "Run now" button
+* Exclude single posts from the editor sidebar box
+* Restore a post: original robots settings back, post republished if archived
+* WP-CLI commands: `wp deindex status|preview|run|restore|exclude|include|list`
 
 = Developer hooks =
 
@@ -40,6 +44,8 @@ The admin interface is in Italian.
 * `icrea_deindex_query_args` – filter the WP_Query arguments
 * `icrea_deindex_log_limit` – number of log entries kept (default 200)
 * `icrea_deindex_after_run` – action fired after each run with a summary
+* `icrea_deindex_post_restored` – action fired after a post is restored
+* `icrea_deindex_capability` – capability required to manage the plugin (default `manage_options`)
 
 == Installation ==
 
@@ -67,6 +73,14 @@ After the configured number of days, published posts in the selected categories 
 
 The plugin finds the posts it would process, writes the log and sends the email, but does not change any post.
 
+= How do I keep a post indexed? =
+
+Open the post and tick "Escludi dalla deindicizzazione automatica" in the plugin box, or click "Escludi" in the preview on the Articoli tab. Excluded posts are never noindexed or archived.
+
+= Can I undo the noindex on a post? =
+
+Yes. Use "Ripristina indicizzazione" in the post editor box, in the posts list or on the Articoli tab, or run `wp deindex restore <id>`. The plugin puts back the robots settings the post had before, republishes it if it was archived, removes the "scaduto" tag it added and excludes the post from future runs.
+
 = I updated from 2.3 or earlier: what changes? =
 
 Versions up to 2.3.1 saved the Rank Math robots setting in a format Rank Math could not read, so posts stayed indexed. Version 2.4.0 cleans those values up on update and applies the noindex correctly at the next run. Your settings are migrated automatically, and the old log file in the uploads folder is moved into the database and deleted.
@@ -78,6 +92,15 @@ Versions up to 2.3.1 saved the Rank Math robots setting in a format Rank Math co
 3. Dashboard widget
 
 == Changelog ==
+
+= 2.5.0 =
+* New: Articoli tab with a preview of the next run, processed posts and excluded posts.
+* New: "Run now" button.
+* New: exclude single posts (editor box, preview, WP-CLI).
+* New: restore a post. The original robots settings are saved before the noindex and put back on restore; archived posts are republished and the "scaduto" tag added by the plugin is removed.
+* New: WP-CLI commands `wp deindex status|preview|run|restore|exclude|include|list`.
+* New: `icrea_deindex_capability` filter and `icrea_deindex_post_restored` action.
+* Improved: denied admin actions return HTTP 403.
 
 = 2.4.0 =
 * Fix: the Rank Math noindex was saved double-serialized and ignored by Rank Math, so posts were never actually noindexed. Broken values are cleaned up on update.
@@ -113,6 +136,9 @@ Versions up to 2.3.1 saved the Rank Math robots setting in a format Rank Math co
 * Full refactoring for WordPress.org approval
 
 == Upgrade Notice ==
+
+= 2.5.0 =
+New Articoli tab with preview and "Run now", per-post exclusion and restore, WP-CLI commands.
 
 = 2.4.0 =
 Important fix: up to 2.3.1 the Rank Math noindex was not applied. After updating, the next run noindexes the old posts correctly.

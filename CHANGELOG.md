@@ -2,6 +2,21 @@
 
 Tutte le modifiche rilevanti del plugin **Deindicizzazione Automatica Articoli**.
 
+## 2.5.0 — 2026-11-05
+Testata su WordPress 7.1.4 / PHP 8.3 con Rank Math 1.0.281; Plugin Check senza errori.
+
+### Novità
+- **Scheda "Articoli"** nella pagina del plugin: anteprima della prossima esecuzione (da mettere in noindex / da archiviare, con totali), articoli elaborati (paginati, con data di noindex e archiviazione) e articoli esclusi.
+- **Esegui ora**: lancia subito un'esecuzione con le impostazioni salvate (rispetta simulazione e lock); l'esito compare come avviso e nel log con `[MANUALE]`.
+- **Esclusione del singolo articolo** (meta `_icrea_deindex_exclude`): riquadro "Deindicizzazione automatica" nell'editor (classico e a blocchi), pulsante "Escludi" nell'anteprima, WP-CLI. Gli esclusi non vengono mai messi in noindex né archiviati.
+- **Ripristino**: prima di applicare il noindex il plugin salva i meta robots originali (`_icrea_deindex_backup`); "Ripristina indicizzazione" li rimette, ripubblica l'articolo se archiviato, toglie il tag "scaduto" solo se l'aveva aggiunto il plugin (`_icrea_deindex_tagged`) ed esclude l'articolo. Per gli articoli elaborati dalla 2.4.0 (senza backup) toglie solo il noindex/nofollow aggiunto dal plugin. Disponibile dall'editor, dalla lista articoli, dalla scheda Articoli e da WP-CLI.
+- **WP-CLI** `wp deindex`: `status`, `preview`, `run [--dry-run] [--no-email]`, `restore`, `exclude`, `include`, `list [--excluded]`.
+- Hook `icrea_deindex_capability` (default `manage_options`) e `icrea_deindex_post_restored`; `icrea_deindex_old_articles()` accetta le opzioni `dry_run`, `source`, `email`.
+
+### Migliorie
+- Accesso negato alle azioni admin-post con HTTP 403 invece di 500.
+- `uninstall.php` rimuove anche i meta di esclusione, backup e tag.
+
 ## 2.4.0 — 2026-11-05
 Testata su WordPress 7.1.4 / PHP 8.3 con Rank Math 1.0.281, Yoast SEO e senza plugin SEO; Plugin Check senza errori.
 
