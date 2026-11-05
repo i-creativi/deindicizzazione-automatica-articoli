@@ -1,0 +1,77 @@
+.icrea-settings-container {
+	margin-top: 15px;
+}
+.icrea-settings-section,
+.icrea-stats-box {
+	background: #fff;
+	box-shadow: 0 1px 1px rgba(0, 0, 0, .04);
+	margin-bottom: 15px;
+	padding: 12px;
+}
+.icrea-field-group {
+	margin-bottom: 12px;
+	padding-bottom: 12px;
+}
+.icrea-field-group:last-child {
+	margin-bottom: 0;
+	padding-bottom: 0;
+}
+.icrea-field-group > label,
+.icrea-field-group legend {
+	display: block;
+	margin-bottom: 5px;
+}
+.icrea-field-group .description {
+	margin: 2px 0 5px;
+	color: #646970;
+}
+.icrea-checklist {
+	max-height: 160px;
+	overflow-y: auto;
+	margin: 5px 0;
+	padding: 5px 8px;
+	border: 1px solid #dcdcde;
+}
+.icrea-checklist label,
+.icrea-block {
+	display: block;
+	margin: 4px 0;
+}
+.icrea-inline {
+	margin-right: 15px;
+}
+.icrea-log-container {
+	margin-top: 15px;
+}
+.icrea-log-actions {
+	margin-bottom: 10px;
+}
+.icrea-log-content {
+	border: 1px solid #dcdcde;
+	background: #fff;
+	padding: 10px;
+	max-height: 400px;
+	overflow-y: auto;
+}
+.icrea-log-content pre {
+	margin: 0;
+	white-space: pre-wrap;
+}
+
+/* Widget dashboard */
+.icrea-dashboard-widget h4 {
+	margin: 12px 0 8px;
+	padding-bottom: 4px;
+	border-bottom: 1px solid #f0f0f1;
+}
+.icrea-dashboard-widget h4:first-child {
+	margin-top: 0;
+}
+.icrea-dashboard-widget ul {
+	margin: 0 0 12px 15px;
+	list-style: disc;
+}
+.icrea-dashboard-link {
+	margin-top: 12px;
+	text-align: right;
+}

@@ -8,23 +8,25 @@ Deindicizzazione Automatica Articoli è un plugin completo per la gestione SEO d
 
 ## Funzionalità principali
 
-- **Supporto multi-categoria**: seleziona più categorie da deindicizzare
-- **Deindicizzazione automatica**: imposta articoli come noindex/nofollow dopo X giorni
+- **Supporto multi-categoria**: seleziona più categorie da deindicizzare (sottocategorie incluse)
+- **Deindicizzazione automatica**: imposta gli articoli come noindex dopo X giorni ("noindex, follow" di default, nofollow opzionale)
+- **Rank Math, Yoast SEO o nessun plugin SEO**: il noindex viene scritto per entrambi i plugin; senza plugin SEO interviene il robots di WordPress
+- **Ogni articolo viene trattato una sola volta**: niente email ripetute, contatori corretti, elaborazione a blocchi sui siti grandi
 - **Modalità archiviazione**: cambia lo stato degli articoli (bozza/privato) dopo Y giorni
 - **Notifiche email personalizzabili**: template con placeholder per personalizzare le notifiche
-- **Log completo delle attività**: interfaccia admin per visualizzare e gestire i log
-- **Dashboard widget**: visualizza statistiche e prossime azioni pianificate
+- **Log delle attività**: salvato nel database (ultime 200 esecuzioni), scaricabile dall'admin
+- **Dashboard widget** (solo amministratori): statistiche e prossime azioni pianificate
 - **Filtro per autore**: includi o escludi articoli di specifici autori
 - **Modalità simulazione (dry-run)**: testa la configurazione senza modificare gli articoli
 - **Frequenza cron configurabile**: scegli tra esecuzione oraria, giornaliera o settimanale
 - **Tag "scaduto"**: opzione per aggiungere automaticamente un tag agli articoli vecchi
-- **Rigenerazione sitemap**: supporto per Rank Math e Yoast SEO
+- **Aggiornamento sitemap**: svuota la cache delle sitemap di Rank Math e Yoast SEO
 
 ## Requisiti
 
-- WordPress 5.0 o superiore
+- WordPress 5.7 o superiore
 - PHP 7.2 o superiore
-- Plugin SEO (Rank Math o Yoast SEO) per funzionalità complete
+- Plugin SEO facoltativo: Rank Math o Yoast SEO (senza, il noindex usa il robots di WordPress)
 
 ## Installazione
 
@@ -38,10 +40,11 @@ Deindicizzazione Automatica Articoli è un plugin completo per la gestione SEO d
 ### Impostazioni di base
 
 1. **Categorie da deindicizzare**: seleziona una o più categorie i cui articoli verranno deindicizzati dopo il periodo specificato
-2. **Giorni prima di noindex**: imposta il numero di giorni dopo i quali gli articoli verranno impostati come noindex, nofollow
-3. **Giorni prima di archiviazione**: imposta il numero di giorni dopo i quali cambiare lo stato degli articoli (0 = disabilitato)
-4. **Stato di archiviazione**: scegli se impostare gli articoli archiviati come bozza o privato
-5. **Frequenza di esecuzione**: scegli la frequenza con cui il plugin controllerà gli articoli (ogni ora, ogni giorno, ogni settimana)
+2. **Giorni prima di noindex**: imposta il numero di giorni dopo i quali gli articoli verranno impostati come noindex
+3. **Aggiungi anche nofollow**: disattivato di default (sconsigliato: con "follow" i link interni continuano a passare valore)
+4. **Giorni prima di archiviazione**: imposta il numero di giorni dopo i quali cambiare lo stato degli articoli (0 = disabilitato)
+5. **Stato di archiviazione**: scegli se impostare gli articoli archiviati come bozza o privato
+6. **Frequenza di esecuzione**: scegli la frequenza con cui il plugin controllerà gli articoli (ogni ora, ogni giorno, ogni settimana)
 
 ### Notifiche Email
 
@@ -71,6 +74,7 @@ Una volta configurato, il plugin funziona automaticamente in background secondo 
 
 ### Il plugin non deindicizza gli articoli
 
+- Se la modalità simulazione è attiva, nessun articolo viene modificato
 - Verifica di aver selezionato almeno una categoria
 - Controlla che ci siano articoli nelle categorie selezionate più vecchi del numero di giorni impostato
 - Verifica che il cron di WordPress funzioni correttamente
@@ -81,9 +85,9 @@ Una volta configurato, il plugin funziona automaticamente in background secondo 
 - Verifica che il server WordPress possa inviare email
 - Controlla la cartella spam
 
-### La sitemap non viene rigenerata
+### La sitemap non viene aggiornata
 
-- Verifica di aver attivato l'opzione "Rigenera sitemap automaticamente"
+- Verifica di aver attivato l'opzione di aggiornamento della sitemap
 - Controlla di avere installato e attivato Rank Math o Yoast SEO
 - Verifica che il plugin SEO abbia i permessi per modificare la sitemap
 
@@ -99,9 +103,32 @@ Oltre a impostare noindex/nofollow, puoi configurare il plugin per cambiare lo s
 Attivando questa opzione, il plugin eseguirà tutte le operazioni normalmente ma senza modificare effettivamente gli articoli. Riceverai comunque le email di notifica e i log, utile per testare la configurazione.
 
 ### Il plugin funziona con qualsiasi plugin SEO?
-Il plugin è ottimizzato per funzionare con Rank Math e Yoast SEO. La funzionalità di base (impostare noindex/nofollow) funziona con Rank Math. La rigenerazione della sitemap è supportata per entrambi.
+Il noindex viene scritto sia per Rank Math sia per Yoast SEO, così resta valido anche se il sito cambia plugin SEO. Senza plugin SEO il noindex passa dal robots di WordPress (filtro `wp_robots`). La cache delle sitemap viene svuotata per entrambi.
+
+### Ho aggiornato dalla 2.3 o precedente: cosa cambia?
+Fino alla 2.3.1 il noindex di Rank Math veniva salvato in un formato che Rank Math non leggeva, e gli articoli restavano indicizzati. La 2.4.0 ripulisce quei valori all'aggiornamento e applica il noindex alla prima esecuzione. Le impostazioni vengono migrate da sole (categorie da slug a ID) e il vecchio file di log in `uploads` viene spostato nel database e cancellato.
+
+## Hook per sviluppatori
+- `icrea_deindex_post_types`: tipi di contenuto elaborati (default `post`)
+- `icrea_deindex_batch_size`: articoli per esecuzione e per azione (default 200)
+- `icrea_deindex_query_args`: argomenti della WP_Query
+- `icrea_deindex_log_limit`: voci di log conservate (default 200)
+- `icrea_deindex_after_run`: azione dopo ogni esecuzione, con il riepilogo
 
 ## Changelog
+
+### 2.4.0
+- Fix: il noindex di Rank Math veniva serializzato due volte e ignorato, quindi gli articoli non venivano mai deindicizzati; i valori rotti vengono ripuliti all'aggiornamento
+- Fix: ogni articolo viene trattato una sola volta (prima ogni esecuzione rielaborava tutto, con email ripetute e contatore gonfiato)
+- Fix: possibile errore fatale con PHP 8 nella rigenerazione della sitemap
+- Fix: il log era un file pubblico in uploads; ora sta nel database
+- Fix: widget della dashboard visibile solo agli amministratori
+- Fix: validazione delle impostazioni (frequenza, stato, autori, email, giorni)
+- Nuovo: supporto noindex per Yoast SEO e fallback sul robots di WordPress
+- Nuovo: "noindex, follow" di default, nofollow opzionale
+- Nuovo: sottocategorie incluse, categorie salvate per ID, elaborazione a blocchi, disinstallazione pulita, link Impostazioni
+- Migliorato: stringhe traducibili, CSS caricato con enqueue, salvataggio via admin-post con nonce e permessi
+- Requisito minimo: WordPress 5.7
 
 ### 2.3.1
 - Prima pubblicazione su WordPress.org delle funzionalità 2.3 (le versioni .org precedenti erano ferme alla 2.2)
