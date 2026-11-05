@@ -127,7 +127,7 @@ add_filter( 'removable_query_args', 'icrea_deindex_removable_query_args' );
  * @return string[]
  */
 function icrea_deindex_row_actions( $actions, $post ) {
-	if ( ! in_array( $post->post_type, icrea_deindex_post_types(), true ) || ! icrea_deindex_user_can_manage_post( $post->ID ) ) {
+	if ( ! icrea_deindex_user_can_manage_post( $post->ID ) ) {
 		return $actions;
 	}
 	$state = icrea_deindex_get_post_state( $post->ID );
@@ -140,22 +140,34 @@ add_filter( 'post_row_actions', 'icrea_deindex_row_actions', 10, 2 );
 add_filter( 'page_row_actions', 'icrea_deindex_row_actions', 10, 2 );
 
 /**
- * Riquadro "Deindicizzazione automatica" nell'editor.
+ * Riquadro "Deindicizzazione automatica" nell'editor: sui tipi configurati e su ogni contenuto già elaborato
+ * o escluso (anche se il suo tipo è stato poi tolto dalle impostazioni).
+ *
+ * @param string       $post_type Tipo di contenuto.
+ * @param WP_Post|null $post      Contenuto.
  */
-function icrea_deindex_add_meta_box() {
+function icrea_deindex_add_meta_box( $post_type, $post = null ) {
 	if ( ! current_user_can( icrea_deindex_capability() ) ) {
+		return;
+	}
+	$show = in_array( $post_type, icrea_deindex_post_types(), true );
+	if ( ! $show && $post instanceof WP_Post ) {
+		$state = icrea_deindex_get_post_state( $post->ID );
+		$show  = $state['noindexed'] || $state['archived'] || $state['excluded'];
+	}
+	if ( ! $show ) {
 		return;
 	}
 	add_meta_box(
 		'icrea_deindex_box',
 		__( 'Deindicizzazione automatica', 'deindicizzazione-automatica-articoli' ),
 		'icrea_deindex_render_meta_box',
-		icrea_deindex_post_types(),
+		$post_type,
 		'side',
 		'default'
 	);
 }
-add_action( 'add_meta_boxes', 'icrea_deindex_add_meta_box' );
+add_action( 'add_meta_boxes', 'icrea_deindex_add_meta_box', 10, 2 );
 
 /**
  * Contenuto del riquadro.

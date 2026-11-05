@@ -95,3 +95,29 @@
 .icrea-posts-container h2 {
 	margin-top: 28px;
 }
+
+/* Contenuti da elaborare */
+.icrea-target {
+	margin: 8px 0;
+	padding: 8px 10px;
+	border: 1px solid #dcdcde;
+	background: #f6f7f7;
+}
+.icrea-target.is-enabled {
+	background: #fff;
+	border-color: #2271b1;
+}
+.icrea-target code {
+	font-size: 11px;
+}
+.icrea-target-options {
+	margin-top: 8px;
+}
+.icrea-terms-title {
+	display: block;
+	color: #646970;
+}
+.icrea-js .icrea-target:not(.is-enabled) .icrea-target-options,
+.icrea-js .icrea-target-terms[data-inactive] {
+	display: none;
+}

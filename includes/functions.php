@@ -38,12 +38,117 @@ function icrea_deindex_user_can_manage_post( $post_id ) {
 }
 
 /**
- * Tipi di contenuto elaborati.
+ * Tipi di contenuto elaborati (quelli configurati nelle impostazioni).
  *
  * @return string[]
  */
 function icrea_deindex_post_types() {
-	return (array) apply_filters( 'icrea_deindex_post_types', array( 'post' ) );
+	return array_keys( icrea_deindex_get_targets() );
+}
+
+/**
+ * Tipi di contenuto pubblici che si possono configurare (allegati esclusi).
+ *
+ * @return WP_Post_Type[] slug => oggetto.
+ */
+function icrea_deindex_available_post_types() {
+	$types = get_post_types( array( 'public' => true ), 'objects' );
+	unset( $types['attachment'] );
+	return $types;
+}
+
+/**
+ * Tassonomie che si possono usare come filtro per un tipo di contenuto.
+ *
+ * @param string $post_type Tipo di contenuto.
+ * @return WP_Taxonomy[] slug => oggetto.
+ */
+function icrea_deindex_available_taxonomies( $post_type ) {
+	$taxonomies = array();
+	foreach ( get_object_taxonomies( $post_type, 'objects' ) as $slug => $taxonomy ) {
+		if ( $taxonomy->show_ui && 'post_format' !== $slug ) {
+			$taxonomies[ $slug ] = $taxonomy;
+		}
+	}
+	return $taxonomies;
+}
+
+/**
+ * Configurazione salvata: per ogni tipo di contenuto la tassonomia ('' = tutti i contenuti) e i termini.
+ *
+ * @return array tipo => array( 'taxonomy' => string, 'terms' => int[] ).
+ */
+function icrea_deindex_get_saved_targets() {
+	$saved   = get_option( 'icrea_deindex_targets', array() );
+	$targets = array();
+	foreach ( is_array( $saved ) ? $saved : array() as $post_type => $target ) {
+		if ( ! is_array( $target ) ) {
+			continue;
+		}
+		$targets[ sanitize_key( $post_type ) ] = array(
+			'taxonomy' => isset( $target['taxonomy'] ) ? sanitize_key( $target['taxonomy'] ) : '',
+			'terms'    => isset( $target['terms'] ) ? array_values( array_filter( array_map( 'absint', (array) $target['terms'] ) ) ) : array(),
+		);
+	}
+	return $targets;
+}
+
+/**
+ * Obiettivi attivi: tipi esistenti con "tutti i contenuti" oppure con almeno un termine selezionato.
+ *
+ * Il filtro icrea_deindex_post_types resta compatibile con la 2.5: un tipo aggiunto dal filtro senza
+ * configurazione propria usa le stesse categorie degli articoli.
+ *
+ * @return array tipo => array( 'taxonomy' => string, 'terms' => int[] ).
+ */
+function icrea_deindex_get_targets() {
+	$targets = array();
+	foreach ( icrea_deindex_get_saved_targets() as $post_type => $target ) {
+		if ( ! post_type_exists( $post_type ) ) {
+			continue;
+		}
+		if ( '' === $target['taxonomy'] ) {
+			$targets[ $post_type ] = $target;
+		} elseif ( $target['terms'] && taxonomy_exists( $target['taxonomy'] ) && is_object_in_taxonomy( $post_type, $target['taxonomy'] ) ) {
+			$targets[ $post_type ] = $target;
+		}
+	}
+
+	$types = (array) apply_filters( 'icrea_deindex_post_types', array_keys( $targets ) );
+	foreach ( $types as $post_type ) {
+		if ( ! isset( $targets[ $post_type ] ) && isset( $targets['post'] ) && 'category' === $targets['post']['taxonomy'] && post_type_exists( $post_type ) ) {
+			$targets[ $post_type ] = $targets['post'];
+		}
+	}
+	return array_intersect_key( $targets, array_flip( $types ) );
+}
+
+/**
+ * Descrizione leggibile degli obiettivi (per email, log, widget): "Articoli: News, Eventi; Offerte: tutti".
+ *
+ * @param array|null $targets Obiettivi (null = quelli attivi).
+ * @return string
+ */
+function icrea_deindex_targets_label( $targets = null ) {
+	$targets = null === $targets ? icrea_deindex_get_targets() : $targets;
+	$parts   = array();
+	foreach ( $targets as $post_type => $target ) {
+		$type  = get_post_type_object( $post_type );
+		$label = $type ? $type->labels->name : $post_type;
+		if ( '' === $target['taxonomy'] ) {
+			$parts[] = $label . ': ' . __( 'tutti i contenuti', 'deindicizzazione-automatica-articoli' );
+			continue;
+		}
+		$names = array();
+		foreach ( $target['terms'] as $term_id ) {
+			$term = get_term( $term_id, $target['taxonomy'] );
+			if ( $term && ! is_wp_error( $term ) ) {
+				$names[] = $term->name;
+			}
+		}
+		$parts[] = $label . ': ' . implode( ', ', $names );
+	}
+	return implode( '; ', $parts );
 }
 
 /**
@@ -100,33 +205,6 @@ function icrea_deindex_get_archive_status() {
 	return array_key_exists( $status, icrea_deindex_archive_statuses() ) ? $status : 'draft';
 }
 
-/**
- * ID delle categorie monitorate.
- *
- * @return int[]
- */
-function icrea_deindex_get_category_ids() {
-	$ids = get_option( 'icrea_deindex_category_ids', array() );
-	return is_array( $ids ) ? array_values( array_filter( array_map( 'absint', $ids ) ) ) : array();
-}
-
-/**
- * Nomi delle categorie monitorate (per email, log e widget).
- *
- * @param int[] $category_ids ID categorie.
- * @return string[]
- */
-function icrea_deindex_get_category_names( $category_ids ) {
-	$names = array();
-	foreach ( $category_ids as $id ) {
-		$term = get_term( $id, 'category' );
-		if ( $term && ! is_wp_error( $term ) ) {
-			$names[] = $term->name;
-		}
-	}
-	return $names;
-}
-
 /*
  * -------------------------------------------------------------------------
  * Migrazione dalle versioni precedenti
@@ -136,7 +214,8 @@ function icrea_deindex_get_category_names( $category_ids ) {
 /**
  * Migra dati e opzioni quando cambia la versione del plugin.
  *
- * - 2.2/2.3 salvavano le categorie per slug: ora si usano gli ID (resistono al cambio di slug).
+ * - 2.2/2.3 salvavano le categorie per slug, 2.4/2.5 per ID: dalla 2.6 la configurazione è per tipo di contenuto
+ *   (tassonomia + ID dei termini) nell'opzione icrea_deindex_targets.
  * - 2.3 scriveva il log in un file pubblico in uploads: ora sta in un'opzione non autocaricata.
  * - 2.2/2.3 salvavano rank_math_robots serializzato due volte: Rank Math lo ignorava e l'articolo restava
  *   indicizzato. Quei meta vengono rimossi, così la prossima esecuzione applica il noindex correttamente.
@@ -149,21 +228,33 @@ function icrea_deindex_maybe_upgrade() {
 
 	global $wpdb;
 
-	// Categorie: da slug a ID.
-	if ( false === get_option( 'icrea_deindex_category_ids', false ) ) {
-		$slugs = get_option( 'icrea_deindex_categories', array() );
-		if ( empty( $slugs ) ) {
-			$old = get_option( 'icrea_deindex_category', '' );
-			$slugs = $old ? array( $old ) : array();
-		}
-		$ids = array();
-		foreach ( (array) $slugs as $slug ) {
-			$term = get_term_by( 'slug', $slug, 'category' );
-			if ( $term ) {
-				$ids[] = (int) $term->term_id;
+	// Obiettivi: dalle categorie (ID dalla 2.4, slug fino alla 2.3) alla configurazione per tipo di contenuto.
+	if ( false === get_option( 'icrea_deindex_targets', false ) ) {
+		$ids = get_option( 'icrea_deindex_category_ids', false );
+		if ( false === $ids ) {
+			$slugs = get_option( 'icrea_deindex_categories', array() );
+			if ( empty( $slugs ) ) {
+				$old   = get_option( 'icrea_deindex_category', '' );
+				$slugs = $old ? array( $old ) : array();
+			}
+			$ids = array();
+			foreach ( (array) $slugs as $slug ) {
+				$term = get_term_by( 'slug', $slug, 'category' );
+				if ( $term ) {
+					$ids[] = (int) $term->term_id;
+				}
 			}
 		}
-		update_option( 'icrea_deindex_category_ids', $ids );
+		$ids = array_values( array_filter( array_map( 'absint', (array) $ids ) ) );
+		update_option(
+			'icrea_deindex_targets',
+			$ids ? array(
+				'post' => array(
+					'taxonomy' => 'category',
+					'terms'    => $ids,
+				),
+			) : array()
+		);
 	}
 
 	// Nuove opzioni.
@@ -201,6 +292,7 @@ function icrea_deindex_maybe_upgrade() {
 	);
 
 	// Opzioni non più usate.
+	delete_option( 'icrea_deindex_category_ids' );
 	delete_option( 'icrea_deindex_categories' );
 	delete_option( 'icrea_deindex_category' );
 
@@ -483,32 +575,31 @@ function icrea_deindex_restore_post( $post_id ) {
  */
 
 /**
- * ID degli articoli pubblicati, più vecchi di $days giorni, nelle categorie monitorate.
+ * ID dei contenuti pubblicati, più vecchi di $days giorni, che rientrano negli obiettivi configurati.
  *
  * @param int    $days         Giorni.
- * @param int[]  $category_ids Categorie (incluse le sottocategorie).
- * @param string $exclude_meta Escludi gli articoli che hanno già questo meta ('' = nessuna esclusione).
- * @param int    $limit        Numero massimo di articoli.
+ * @param string $exclude_meta Escludi i contenuti che hanno già questo meta ('' = nessuna esclusione).
+ * @param int    $limit        Numero massimo di contenuti.
  * @return int[]
  */
-function icrea_deindex_find_posts( $days, $category_ids, $exclude_meta, $limit ) {
-	$result = icrea_deindex_query_posts( $days, $category_ids, $exclude_meta, $limit, false );
+function icrea_deindex_find_posts( $days, $exclude_meta, $limit ) {
+	$result = icrea_deindex_query_posts( $days, $exclude_meta, $limit, false );
 	return $result['ids'];
 }
 
 /**
- * Come icrea_deindex_find_posts(), con il totale degli articoli trovati (per l'anteprima).
+ * Come icrea_deindex_find_posts(), con il totale (per l'anteprima).
  *
- * Gli articoli esclusi manualmente non vengono mai restituiti.
+ * Si fa una query per tipo di contenuto, perché ognuno ha la sua tassonomia; il limite è condiviso.
+ * I contenuti esclusi manualmente non vengono mai restituiti.
  *
  * @param int    $days         Giorni.
- * @param int[]  $category_ids Categorie.
  * @param string $exclude_meta Meta marcatore da escludere ('' = nessuno).
- * @param int    $limit        Numero massimo di articoli.
+ * @param int    $limit        Numero massimo di contenuti.
  * @param bool   $with_total   Calcolare il totale.
  * @return array{ids:int[],total:int}
  */
-function icrea_deindex_query_posts( $days, $category_ids, $exclude_meta, $limit, $with_total ) {
+function icrea_deindex_query_posts( $days, $exclude_meta, $limit, $with_total ) {
 	$meta_query = array(
 		array(
 			'key'     => ICREA_DEINDEX_META_EXCLUDED,
@@ -522,58 +613,73 @@ function icrea_deindex_query_posts( $days, $category_ids, $exclude_meta, $limit,
 		);
 	}
 
-	$args = array(
-		'post_type'           => icrea_deindex_post_types(),
-		'post_status'         => 'publish',
-		'fields'              => 'ids',
-		'posts_per_page'      => $limit,
-		'orderby'             => 'date',
-		'order'               => 'ASC',
-		'no_found_rows'       => ! $with_total,
-		'meta_query'          => $meta_query, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
-		'ignore_sticky_posts' => true,
-		'tax_query'           => array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_tax_query
-			array(
-				'taxonomy'         => 'category',
-				'field'            => 'term_id',
-				'terms'            => $category_ids,
-				'include_children' => true,
-			),
-		),
-		'date_query'          => array(
-			array(
-				'column' => 'post_date',
-				'before' => absint( $days ) . ' days ago',
-			),
-		),
-	);
-
 	$authors = array_filter( array_map( 'absint', (array) get_option( 'icrea_deindex_authors', array() ) ) );
-	if ( $authors ) {
-		if ( 'include' === get_option( 'icrea_deindex_authors_mode', 'exclude' ) ) {
-			$args['author__in'] = $authors;
-		} else {
-			$args['author__not_in'] = $authors;
+	$ids     = array();
+	$total   = 0;
+
+	foreach ( icrea_deindex_get_targets() as $post_type => $target ) {
+		$remaining = $limit - count( $ids );
+		if ( $remaining <= 0 && ! $with_total ) {
+			break;
 		}
+
+		$args = array(
+			'post_type'           => $post_type,
+			'post_status'         => 'publish',
+			'fields'              => 'ids',
+			'posts_per_page'      => max( 1, $remaining ),
+			'orderby'             => 'date',
+			'order'               => 'ASC',
+			'no_found_rows'       => ! $with_total,
+			'ignore_sticky_posts' => true,
+			'meta_query'          => $meta_query, // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_meta_query
+			'date_query'          => array(
+				array(
+					'column' => 'post_date',
+					'before' => absint( $days ) . ' days ago',
+				),
+			),
+		);
+		if ( '' !== $target['taxonomy'] ) {
+			$args['tax_query'] = array( // phpcs:ignore WordPress.DB.SlowDBQuery.slow_db_query_tax_query
+				array(
+					'taxonomy'         => $target['taxonomy'],
+					'field'            => 'term_id',
+					'terms'            => $target['terms'],
+					'include_children' => is_taxonomy_hierarchical( $target['taxonomy'] ),
+				),
+			);
+		}
+		if ( $authors ) {
+			if ( 'include' === get_option( 'icrea_deindex_authors_mode', 'exclude' ) ) {
+				$args['author__in'] = $authors;
+			} else {
+				$args['author__not_in'] = $authors;
+			}
+		}
+
+		$query = new WP_Query( apply_filters( 'icrea_deindex_query_args', $args, $days, $exclude_meta, $post_type ) );
+		$found = array_map( 'intval', $query->posts );
+		if ( $remaining > 0 ) {
+			$ids = array_merge( $ids, array_slice( $found, 0, $remaining ) );
+		}
+		$total += $with_total ? (int) $query->found_posts : count( $found );
 	}
 
-	$query = new WP_Query( apply_filters( 'icrea_deindex_query_args', $args, $days, $exclude_meta ) );
-	$ids   = array_map( 'intval', $query->posts );
 	return array(
 		'ids'   => $ids,
-		'total' => $with_total ? (int) $query->found_posts : count( $ids ),
+		'total' => $total,
 	);
 }
 
 /**
- * Anteprima della prossima esecuzione: articoli che verrebbero messi in noindex e archiviati.
+ * Anteprima della prossima esecuzione: contenuti che verrebbero messi in noindex e archiviati.
  *
- * @param int $limit Numero massimo di articoli elencati per azione.
- * @return array|null null se non ci sono categorie configurate.
+ * @param int $limit Numero massimo di contenuti elencati per azione.
+ * @return array|null null se non c'è nulla di configurato.
  */
 function icrea_deindex_preview( $limit = 50 ) {
-	$category_ids = icrea_deindex_get_category_ids();
-	if ( ! $category_ids ) {
+	if ( ! icrea_deindex_get_targets() ) {
 		return null;
 	}
 	$days         = absint( get_option( 'icrea_deindex_days', 7 ) );
@@ -584,8 +690,8 @@ function icrea_deindex_preview( $limit = 50 ) {
 	);
 
 	return array(
-		'deindex' => $days > 0 ? icrea_deindex_query_posts( $days, $category_ids, ICREA_DEINDEX_META_NOINDEXED, $limit, true ) : $empty,
-		'archive' => $archive_days > 0 ? icrea_deindex_query_posts( $archive_days, $category_ids, '', $limit, true ) : $empty,
+		'deindex' => $days > 0 ? icrea_deindex_query_posts( $days, ICREA_DEINDEX_META_NOINDEXED, $limit, true ) : $empty,
+		'archive' => $archive_days > 0 ? icrea_deindex_query_posts( $archive_days, '', $limit, true ) : $empty,
 	);
 }
 
@@ -621,7 +727,7 @@ function icrea_deindex_get_marked_posts( $which, $page = 1, $per_page = 50 ) {
 
 	$query = new WP_Query(
 		array(
-			'post_type'      => icrea_deindex_post_types(),
+			'post_type'      => array_keys( icrea_deindex_available_post_types() ),
 			'post_status'    => array( 'publish', 'draft', 'private', 'pending', 'future' ),
 			'fields'         => 'ids',
 			'posts_per_page' => $per_page,
@@ -674,8 +780,8 @@ function icrea_deindex_old_articles( $options = array() ) {
 		)
 	);
 
-	$category_ids = icrea_deindex_get_category_ids();
-	if ( empty( $category_ids ) ) {
+	$targets = icrea_deindex_get_targets();
+	if ( ! $targets ) {
 		return null;
 	}
 
@@ -703,12 +809,12 @@ function icrea_deindex_old_articles( $options = array() ) {
 
 	// Noindex.
 	if ( $days > 0 ) {
-		$ids = icrea_deindex_find_posts( $days, $category_ids, ICREA_DEINDEX_META_NOINDEXED, $limit );
+		$ids = icrea_deindex_find_posts( $days, ICREA_DEINDEX_META_NOINDEXED, $limit );
 		$summary['more_queued'] = count( $ids ) >= $limit;
 		foreach ( $ids as $post_id ) {
 			if ( ! $dry_run ) {
 				icrea_deindex_apply_noindex( $post_id, $nofollow );
-				if ( $add_tag && ! has_tag( 'scaduto', $post_id ) && ! is_wp_error( wp_set_post_tags( $post_id, 'scaduto', true ) ) ) {
+				if ( $add_tag && is_object_in_taxonomy( get_post_type( $post_id ), 'post_tag' ) && ! has_tag( 'scaduto', $post_id ) && ! is_wp_error( wp_set_post_tags( $post_id, 'scaduto', true ) ) ) {
 					update_post_meta( $post_id, ICREA_DEINDEX_META_TAGGED, 1 );
 					$summary['tagged'][] = $post_id;
 				}
@@ -719,7 +825,7 @@ function icrea_deindex_old_articles( $options = array() ) {
 
 	// Archiviazione (gli articoli archiviati non sono più "publish", quindi non vengono ripresi).
 	if ( $archive_days > 0 ) {
-		$ids = icrea_deindex_find_posts( $archive_days, $category_ids, '', $limit );
+		$ids = icrea_deindex_find_posts( $archive_days, '', $limit );
 		$summary['more_queued'] = $summary['more_queued'] || count( $ids ) >= $limit;
 		foreach ( $ids as $post_id ) {
 			if ( ! $dry_run ) {
@@ -746,7 +852,7 @@ function icrea_deindex_old_articles( $options = array() ) {
 			update_option( 'icrea_deindex_processed_count', (int) get_option( 'icrea_deindex_processed_count', 0 ) + $touched );
 		}
 		if ( $options['email'] ) {
-			icrea_deindex_send_email( $summary, $category_ids, $days, $archive_status );
+			icrea_deindex_send_email( $summary, $targets, $days, $archive_status );
 		}
 		if ( ! $dry_run && get_option( 'icrea_deindex_regenerate_sitemap', 0 ) ) {
 			icrea_deindex_flush_sitemaps();
@@ -755,7 +861,7 @@ function icrea_deindex_old_articles( $options = array() ) {
 
 	// Nel log solo le esecuzioni con novità: con il cron orario quelle vuote riempirebbero lo storico.
 	if ( $touched ) {
-		icrea_deindex_log_add( icrea_deindex_summary_message( $summary, $category_ids, $days, $archive_days ) );
+		icrea_deindex_log_add( icrea_deindex_summary_message( $summary, $targets, $days, $archive_days ) );
 	}
 	update_option( 'icrea_deindex_last_run', time(), false );
 
@@ -770,12 +876,12 @@ function icrea_deindex_old_articles( $options = array() ) {
  * Riga di log per un'esecuzione.
  *
  * @param array $summary      Riepilogo.
- * @param int[] $category_ids Categorie.
+ * @param array $targets      Obiettivi.
  * @param int   $days         Giorni noindex.
  * @param int   $archive_days Giorni archiviazione.
  * @return string
  */
-function icrea_deindex_summary_message( $summary, $category_ids, $days, $archive_days ) {
+function icrea_deindex_summary_message( $summary, $targets, $days, $archive_days ) {
 	$parts = array();
 	if ( isset( $summary['source'] ) && 'manual' === $summary['source'] ) {
 		$parts[] = __( '[MANUALE]', 'deindicizzazione-automatica-articoli' );
@@ -785,8 +891,8 @@ function icrea_deindex_summary_message( $summary, $category_ids, $days, $archive
 	if ( $summary['dry_run'] ) {
 		$parts[] = __( '[SIMULAZIONE]', 'deindicizzazione-automatica-articoli' );
 	}
-	/* translators: %s: elenco categorie */
-	$parts[] = sprintf( __( 'Categorie: %s.', 'deindicizzazione-automatica-articoli' ), implode( ', ', icrea_deindex_get_category_names( $category_ids ) ) );
+	/* translators: %s: contenuti monitorati */
+	$parts[] = sprintf( __( 'Contenuti: %s.', 'deindicizzazione-automatica-articoli' ), icrea_deindex_targets_label( $targets ) );
 	/* translators: 1: numero articoli, 2: giorni */
 	$parts[] = sprintf( __( 'Deindicizzati: %1$d (dopo %2$d giorni).', 'deindicizzazione-automatica-articoli' ), count( $summary['deindexed'] ), $days );
 	if ( $archive_days > 0 ) {
@@ -807,11 +913,11 @@ function icrea_deindex_summary_message( $summary, $category_ids, $days, $archive
  * Email di notifica (solo se ci sono articoli nuovi e destinatari validi).
  *
  * @param array  $summary        Riepilogo.
- * @param int[]  $category_ids   Categorie.
+ * @param array  $targets        Obiettivi.
  * @param int    $days           Giorni noindex.
  * @param string $archive_status Stato di archiviazione.
  */
-function icrea_deindex_send_email( $summary, $category_ids, $days, $archive_status ) {
+function icrea_deindex_send_email( $summary, $targets, $days, $archive_status ) {
 	$recipients = array();
 	foreach ( explode( ',', (string) get_option( 'icrea_deindex_emails', '' ) ) as $email ) {
 		$email = sanitize_email( trim( $email ) );
@@ -831,7 +937,7 @@ function icrea_deindex_send_email( $summary, $category_ids, $days, $archive_stat
 	$titles   = array_map( 'icrea_deindex_plain_title', $summary['deindexed'] );
 	$message  = str_replace(
 		array( '{post_titles}', '{category}', '{days}' ),
-		array( implode( "\n", $titles ), implode( ', ', icrea_deindex_get_category_names( $category_ids ) ), (string) $days ),
+		array( implode( "\n", $titles ), icrea_deindex_targets_label( $targets ), (string) $days ),
 		wp_strip_all_tags( $template )
 	);
 
@@ -892,7 +998,7 @@ add_action( 'wp_dashboard_setup', 'icrea_deindex_add_dashboard_widget' );
  * Contenuto del widget della dashboard.
  */
 function icrea_deindex_dashboard_widget_content() {
-	$category_ids = icrea_deindex_get_category_ids();
+	$targets      = icrea_deindex_get_targets();
 	$days         = absint( get_option( 'icrea_deindex_days', 7 ) );
 	$archive_days = absint( get_option( 'icrea_deindex_archive_days', 0 ) );
 	$next_run     = wp_next_scheduled( 'icrea_deindex_cron_hook' );
@@ -921,20 +1027,20 @@ function icrea_deindex_dashboard_widget_content() {
 	}
 
 	echo '<h4>' . esc_html__( 'Prossime azioni pianificate', 'deindicizzazione-automatica-articoli' ) . '</h4>';
-	if ( ! $category_ids ) {
-		echo '<p>' . esc_html__( 'Nessuna categoria selezionata: il plugin non sta elaborando articoli.', 'deindicizzazione-automatica-articoli' ) . '</p>';
+	if ( ! $targets ) {
+		echo '<p>' . esc_html__( 'Nessun contenuto configurato: il plugin non sta elaborando nulla.', 'deindicizzazione-automatica-articoli' ) . '</p>';
 	} elseif ( $next_run ) {
 		/* translators: 1: data e ora, 2: tempo mancante */
 		echo '<p>' . esc_html( sprintf( __( 'Prossima esecuzione: %1$s (tra %2$s)', 'deindicizzazione-automatica-articoli' ), wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), $next_run ), human_time_diff( time(), max( time(), $next_run ) ) ) ) . '</p>';
-		$names = implode( ', ', icrea_deindex_get_category_names( $category_ids ) );
+		$names = icrea_deindex_targets_label( $targets );
 		echo '<ul>';
 		if ( $days > 0 ) {
-			/* translators: 1: categorie, 2: giorni */
-			echo '<li>' . esc_html( sprintf( __( 'Noindex degli articoli in %1$s più vecchi di %2$d giorni', 'deindicizzazione-automatica-articoli' ), $names, $days ) ) . '</li>';
+			/* translators: 1: contenuti monitorati, 2: giorni */
+			echo '<li>' . esc_html( sprintf( __( 'Noindex dei contenuti (%1$s) più vecchi di %2$d giorni', 'deindicizzazione-automatica-articoli' ), $names, $days ) ) . '</li>';
 		}
 		if ( $archive_days > 0 ) {
 			/* translators: 1: stato, 2: giorni */
-			echo '<li>' . esc_html( sprintf( __( 'Archiviazione (stato: %1$s) degli articoli più vecchi di %2$d giorni', 'deindicizzazione-automatica-articoli' ), $statuses[ icrea_deindex_get_archive_status() ], $archive_days ) ) . '</li>';
+			echo '<li>' . esc_html( sprintf( __( 'Archiviazione (stato: %1$s) dei contenuti più vecchi di %2$d giorni', 'deindicizzazione-automatica-articoli' ), $statuses[ icrea_deindex_get_archive_status() ], $archive_days ) ) . '</li>';
 		}
 		echo '</ul>';
 		/* translators: %s: frequenza */

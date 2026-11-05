@@ -22,7 +22,6 @@ class Icrea_Deindex_CLI {
 	 *     wp deindex status
 	 */
 	public function status() {
-		$category_ids = icrea_deindex_get_category_ids();
 		$next_run     = wp_next_scheduled( 'icrea_deindex_cron_hook' );
 		$last_run     = (int) get_option( 'icrea_deindex_last_run', 0 );
 		$excluded     = icrea_deindex_get_marked_posts( 'excluded', 1, 1 );
@@ -30,7 +29,7 @@ class Icrea_Deindex_CLI {
 
 		$rows = array(
 			array( 'Setting' => 'version', 'Value' => ICREA_DEINDEX_VERSION ),
-			array( 'Setting' => 'categories', 'Value' => $category_ids ? implode( ', ', icrea_deindex_get_category_names( $category_ids ) ) : '-' ),
+			array( 'Setting' => 'targets', 'Value' => icrea_deindex_get_targets() ? icrea_deindex_targets_label() : '-' ),
 			array( 'Setting' => 'noindex_days', 'Value' => absint( get_option( 'icrea_deindex_days', 7 ) ) ),
 			array( 'Setting' => 'archive_days', 'Value' => absint( get_option( 'icrea_deindex_archive_days', 0 ) ) ),
 			array( 'Setting' => 'archive_status', 'Value' => icrea_deindex_get_archive_status() ),
@@ -74,7 +73,7 @@ class Icrea_Deindex_CLI {
 	public function preview( $args, $assoc_args ) {
 		$preview = icrea_deindex_preview( 1000 );
 		if ( null === $preview ) {
-			WP_CLI::error( 'Nessuna categoria configurata.' );
+			WP_CLI::error( 'Nessun contenuto configurato.' );
 		}
 
 		$items = array();
@@ -82,13 +81,14 @@ class Icrea_Deindex_CLI {
 			foreach ( $preview[ $key ]['ids'] as $post_id ) {
 				$items[] = array(
 					'ID'     => $post_id,
+					'type'   => get_post_type( $post_id ),
 					'action' => $label,
 					'date'   => get_the_date( 'Y-m-d', $post_id ),
 					'title'  => icrea_deindex_plain_title( $post_id ),
 				);
 			}
 		}
-		self::output( $items, $assoc_args, array( 'ID', 'action', 'date', 'title' ) );
+		self::output( $items, $assoc_args, array( 'ID', 'type', 'action', 'date', 'title' ) );
 	}
 
 	/**
@@ -111,8 +111,8 @@ class Icrea_Deindex_CLI {
 	 * @param array $assoc_args Opzioni.
 	 */
 	public function run( $args, $assoc_args ) {
-		if ( ! icrea_deindex_get_category_ids() ) {
-			WP_CLI::error( 'Nessuna categoria configurata.' );
+		if ( ! icrea_deindex_get_targets() ) {
+			WP_CLI::error( 'Nessun contenuto configurato.' );
 		}
 		if ( get_transient( 'icrea_deindex_running' ) ) {
 			WP_CLI::error( 'Un\'esecuzione è già in corso.' );
@@ -245,6 +245,7 @@ class Icrea_Deindex_CLI {
 				$state   = icrea_deindex_get_post_state( $post_id );
 				$items[] = array(
 					'ID'        => $post_id,
+					'type'      => get_post_type( $post_id ),
 					'status'    => get_post_status( $post_id ),
 					'noindexed' => $state['noindexed'] ? wp_date( 'Y-m-d', $state['noindexed'] ) : '',
 					'archived'  => $state['archived'] ? wp_date( 'Y-m-d', $state['archived'] ) : '',
@@ -255,7 +256,7 @@ class Icrea_Deindex_CLI {
 			++$page;
 		} while ( $page <= $result['pages'] );
 
-		self::output( $items, $assoc_args, array( 'ID', 'status', 'noindexed', 'archived', 'excluded', 'title' ) );
+		self::output( $items, $assoc_args, array( 'ID', 'type', 'status', 'noindexed', 'archived', 'excluded', 'title' ) );
 	}
 
 	/**
@@ -268,7 +269,7 @@ class Icrea_Deindex_CLI {
 		$errors = 0;
 		foreach ( array_map( 'absint', $args ) as $post_id ) {
 			$post = get_post( $post_id );
-			if ( ! $post || ! in_array( $post->post_type, icrea_deindex_post_types(), true ) ) {
+			if ( ! $post || ! array_key_exists( $post->post_type, icrea_deindex_available_post_types() ) ) {
 				WP_CLI::warning( sprintf( '%d: articolo non trovato.', $post_id ) );
 				++$errors;
 				continue;

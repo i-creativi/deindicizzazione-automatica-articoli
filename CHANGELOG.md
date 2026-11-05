@@ -2,6 +2,25 @@
 
 Tutte le modifiche rilevanti del plugin **Deindicizzazione Automatica Articoli**.
 
+## 2.6.0 — 2026-11-05
+Testata su WordPress 7.1.4 / PHP 8.3 con due CPT di prova (uno con tassonomia gerarchica propria, uno senza tassonomie); Plugin Check senza errori.
+
+### Novità
+- **Tipi di contenuto personalizzati.** Nelle impostazioni la sezione "Contenuti da elaborare" sostituisce "Categorie da deindicizzare": per ogni tipo pubblico (allegati esclusi) si abilita il tipo, si sceglie la tassonomia di filtro (categorie, tag, tassonomie personalizzate; figli inclusi se gerarchica) e i termini, oppure "Tutti i contenuti (nessun filtro)". Nuova opzione `icrea_deindex_targets` = `{ tipo: { taxonomy, terms[] } }` (`taxonomy` vuota = tutti).
+- Una query per tipo di contenuto, con limite di blocco condiviso (`icrea_deindex_batch_size` vale per azione su tutti i tipi insieme); `icrea_deindex_query_args` riceve il tipo come 4° argomento.
+- Validazione lato server: solo tipi pubblici esistenti, solo tassonomie del tipo, solo termini esistenti in quella tassonomia.
+- Etichetta dei contenuti monitorati (`icrea_deindex_targets_label()`) in log, email (`{category}`), widget e `wp deindex status`; colonne "Tipo"/"Termini" nella scheda Articoli; colonna `type` in `wp deindex preview|list`.
+- `admin/admin.js` (caricato solo sulla pagina del plugin) mostra solo i termini della tassonomia scelta; senza JS il form resta usabile.
+- Filtro `icrea_deindex_terms_limit` (default 1000 termini per tassonomia).
+
+### Migliorie
+- Tag "scaduto" solo sui tipi che hanno i tag.
+- La lista "Articoli elaborati", il riquadro nell'editor e l'azione "Ripristina" restano disponibili anche se il tipo viene tolto dalle impostazioni.
+- Compatibilità: `icrea_deindex_post_types` funziona ancora; un tipo aggiunto dal filtro senza configurazione propria usa le categorie degli articoli.
+
+### Migrazione
+- `icrea_deindex_category_ids` (o gli slug delle versioni ≤ 2.3) diventa `icrea_deindex_targets['post']` con tassonomia `category`; la vecchia opzione viene cancellata.
+
 ## 2.5.0 — 2026-11-05
 Testata su WordPress 7.1.4 / PHP 8.3 con Rank Math 1.0.281; Plugin Check senza errori.
 

@@ -1,6 +1,6 @@
 # Deindicizzazione Automatica Articoli
 
-Plugin WordPress per deindicizzare e archiviare automaticamente articoli datati da categorie specifiche. Supporta multi-categoria, email personalizzate, log e dashboard.
+Plugin WordPress per deindicizzare e archiviare automaticamente articoli e altri tipi di contenuto (CPT) datati, filtrati per categoria o tassonomia. Supporta multi-categoria, email personalizzate, log e dashboard.
 
 ## Descrizione
 
@@ -9,6 +9,7 @@ Deindicizzazione Automatica Articoli è un plugin completo per la gestione SEO d
 ## Funzionalità principali
 
 - **Supporto multi-categoria**: seleziona più categorie da deindicizzare (sottocategorie incluse)
+- **Tipi di contenuto personalizzati (CPT)**: per ogni tipo pubblico scegli la tassonomia da usare come filtro (categorie, tag o tassonomie personalizzate) e i termini, oppure "tutti i contenuti" del tipo
 - **Deindicizzazione automatica**: imposta gli articoli come noindex dopo X giorni ("noindex, follow" di default, nofollow opzionale)
 - **Rank Math, Yoast SEO o nessun plugin SEO**: il noindex viene scritto per entrambi i plugin; senza plugin SEO interviene il robots di WordPress
 - **Ogni articolo viene trattato una sola volta**: niente email ripetute, contatori corretti, elaborazione a blocchi sui siti grandi
@@ -37,13 +38,13 @@ Deindicizzazione Automatica Articoli è un plugin completo per la gestione SEO d
 1. Carica il plugin nella directory `/wp-content/plugins/`
 2. Attiva il plugin dal menu 'Plugin' in WordPress
 3. Configura le impostazioni in WP Admin > Deindex Articoli
-4. Seleziona le categorie da monitorare e imposta i giorni per la deindicizzazione
+4. Scegli i contenuti da elaborare (tipo + tassonomia + termini) e imposta i giorni per la deindicizzazione
 
 ## Configurazione
 
 ### Impostazioni di base
 
-1. **Categorie da deindicizzare**: seleziona una o più categorie i cui articoli verranno deindicizzati dopo il periodo specificato
+1. **Contenuti da elaborare**: spunta i tipi di contenuto (Articoli, Pagine, CPT); per ognuno scegli "Filtra per" (una tassonomia del tipo, sottocategorie incluse) e seleziona i termini, oppure "Tutti i contenuti (nessun filtro)". Attenzione ai tipi come i prodotti WooCommerce: il plugin li tratterebbe come gli articoli
 2. **Giorni prima di noindex**: imposta il numero di giorni dopo i quali gli articoli verranno impostati come noindex
 3. **Aggiungi anche nofollow**: disattivato di default (sconsigliato: con "follow" i link interni continuano a passare valore)
 4. **Giorni prima di archiviazione**: imposta il numero di giorni dopo i quali cambiare lo stato degli articoli (0 = disabilitato)
@@ -56,7 +57,7 @@ Deindicizzazione Automatica Articoli è un plugin completo per la gestione SEO d
 2. **Oggetto email**: personalizza l'oggetto delle email di notifica
 3. **Template email**: personalizza il contenuto delle email usando i placeholder disponibili:
    - `{post_titles}`: elenco dei titoli degli articoli processati
-   - `{category}`: categorie monitorate
+   - `{category}`: contenuti monitorati (es. "Articoli: News; Offerte: tutti i contenuti")
    - `{days}`: giorni impostati per la deindicizzazione
 
 ### Opzioni avanzate
@@ -97,7 +98,7 @@ wp deindex list [--excluded]            # articoli elaborati / esclusi
 ### Il plugin non deindicizza gli articoli
 
 - Se la modalità simulazione è attiva, nessun articolo viene modificato
-- Verifica di aver selezionato almeno una categoria
+- Verifica di aver configurato almeno un tipo di contenuto con dei termini selezionati (o "tutti i contenuti")
 - Controlla che ci siano articoli nelle categorie selezionate più vecchi del numero di giorni impostato
 - Verifica che il cron di WordPress funzioni correttamente
 
@@ -118,6 +119,9 @@ wp deindex list [--excluded]            # articoli elaborati / esclusi
 ### Posso selezionare più categorie?
 Sì, puoi selezionare tutte le categorie che desideri monitorare.
 
+### Funziona con i tipi di contenuto personalizzati?
+Sì, dalla 2.6.0. Ogni tipo pubblico compare nelle impostazioni: lo abiliti, scegli la tassonomia (anche personalizzata) e i termini, oppure tutti i contenuti del tipo. Un tipo senza tassonomie si può elaborare solo con "tutti i contenuti".
+
 ### Cosa significa "modalità archiviazione"?
 Oltre a impostare noindex/nofollow, puoi configurare il plugin per cambiare lo stato degli articoli (da pubblicato a bozza o privato) dopo un certo numero di giorni.
 
@@ -131,15 +135,22 @@ Il noindex viene scritto sia per Rank Math sia per Yoast SEO, così resta valido
 Fino alla 2.3.1 il noindex di Rank Math veniva salvato in un formato che Rank Math non leggeva, e gli articoli restavano indicizzati. La 2.4.0 ripulisce quei valori all'aggiornamento e applica il noindex alla prima esecuzione. Le impostazioni vengono migrate da sole (categorie da slug a ID) e il vecchio file di log in `uploads` viene spostato nel database e cancellato.
 
 ## Hook per sviluppatori
-- `icrea_deindex_post_types`: tipi di contenuto elaborati (default `post`)
+- `icrea_deindex_post_types`: tipi di contenuto elaborati (default: quelli configurati; un tipo aggiunto dal filtro senza configurazione usa le categorie degli articoli)
 - `icrea_deindex_batch_size`: articoli per esecuzione e per azione (default 200)
-- `icrea_deindex_query_args`: argomenti della WP_Query
+- `icrea_deindex_query_args`: argomenti della WP_Query (una per tipo di contenuto, passato come 4° argomento)
+- `icrea_deindex_terms_limit`: termini elencati per tassonomia nelle impostazioni (default 1000)
 - `icrea_deindex_log_limit`: voci di log conservate (default 200)
 - `icrea_deindex_after_run`: azione dopo ogni esecuzione, con il riepilogo
 - `icrea_deindex_post_restored`: azione dopo il ripristino di un articolo
 - `icrea_deindex_capability`: capability richiesta per gestire il plugin (default `manage_options`)
 
 ## Changelog
+
+### 2.6.0
+- Nuovo: tipi di contenuto personalizzati, ognuno con la sua tassonomia e i suoi termini (o tutti i contenuti del tipo)
+- Anteprima, log, email e WP-CLI indicano il tipo di contenuto
+- Il tag "scaduto" si aggiunge solo ai tipi che supportano i tag
+- Migrazione automatica: le categorie selezionate diventano la configurazione degli Articoli
 
 ### 2.5.0
 - Nuovo: scheda Articoli con anteprima della prossima esecuzione, articoli elaborati ed esclusi

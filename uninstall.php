@@ -13,6 +13,7 @@ if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {
 }
 
 $icrea_deindex_options = array(
+	'icrea_deindex_targets',
 	'icrea_deindex_category_ids',
 	'icrea_deindex_categories',
 	'icrea_deindex_category',

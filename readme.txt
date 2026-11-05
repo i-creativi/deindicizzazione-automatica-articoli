@@ -4,21 +4,22 @@ Tags: seo, noindex, rank math, yoast, archive
 Requires at least: 5.7
 Tested up to: 7.1
 Requires PHP: 7.2
-Stable tag: 2.5.0
+Stable tag: 2.6.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Automatically noindex and archive old posts from selected categories after a set number of days. Works with Rank Math, Yoast SEO or no SEO plugin.
+Automatically noindex and archive old posts, pages and custom post types after a set number of days. Works with Rank Math, Yoast SEO or no SEO plugin.
 
 == Description ==
 
-Deindicizzazione Automatica Articoli keeps search engines focused on your fresh content. Posts in the categories you choose are set to **noindex** after X days and, optionally, **archived** (moved to draft or private) after Y days.
+Deindicizzazione Automatica Articoli keeps search engines focused on your fresh content. Posts in the categories you choose, and any custom post type filtered by its own taxonomy, are set to **noindex** after X days and, optionally, **archived** (moved to draft or private) after Y days.
 
 The admin interface is in Italian.
 
 = Features =
 
 * Multiple categories, subcategories included
+* Custom post types: for each content type choose a taxonomy and its terms, or process all content of that type
 * Noindex after X days, with "noindex, follow" by default (optional nofollow)
 * Works with **Rank Math**, **Yoast SEO**, or WordPress core robots when no SEO plugin is active
 * Archive mode: change post status to draft or private after Y days
@@ -39,9 +40,10 @@ The admin interface is in Italian.
 
 = Developer hooks =
 
-* `icrea_deindex_post_types` – post types to process (default `post`)
+* `icrea_deindex_post_types` – post types to process (default: the ones configured in the settings; a type added here without its own settings uses the post categories)
 * `icrea_deindex_batch_size` – posts processed per run for each action (default 200)
-* `icrea_deindex_query_args` – filter the WP_Query arguments
+* `icrea_deindex_query_args` – filter the WP_Query arguments (one query per post type, passed as 4th argument)
+* `icrea_deindex_terms_limit` – terms listed per taxonomy in the settings (default 1000)
 * `icrea_deindex_log_limit` – number of log entries kept (default 200)
 * `icrea_deindex_after_run` – action fired after each run with a summary
 * `icrea_deindex_post_restored` – action fired after a post is restored
@@ -52,7 +54,7 @@ The admin interface is in Italian.
 1. Upload the plugin to `/wp-content/plugins/` or install it from the Plugins screen.
 2. Activate it.
 3. Go to **Deindex Articoli** in the admin menu.
-4. Select the categories to monitor and set the number of days.
+4. Choose the content to process (post types with their categories or taxonomies) and set the number of days.
 5. Optional: enable dry-run first to check what would be processed.
 
 == Frequently Asked Questions ==
@@ -73,6 +75,10 @@ After the configured number of days, published posts in the selected categories 
 
 The plugin finds the posts it would process, writes the log and sends the email, but does not change any post.
 
+= Does it work with custom post types? =
+
+Yes. In the settings every public content type is listed: tick it, then choose which taxonomy to filter by (categories, tags or a custom taxonomy, child terms included) and select the terms, or choose "Tutti i contenuti" to process every item of that type. Use it carefully on types like WooCommerce products.
+
 = How do I keep a post indexed? =
 
 Open the post and tick "Escludi dalla deindicizzazione automatica" in the plugin box, or click "Escludi" in the preview on the Articoli tab. Excluded posts are never noindexed or archived.
@@ -92,6 +98,13 @@ Versions up to 2.3.1 saved the Rank Math robots setting in a format Rank Math co
 3. Dashboard widget
 
 == Changelog ==
+
+= 2.6.0 =
+* New: custom post type support. For each public content type choose the taxonomy to filter by (categories, tags or custom taxonomies, child terms included) and its terms, or process all content of the type.
+* New: preview, log, email `{category}` placeholder and WP-CLI show the content type.
+* Improved: the "scaduto" tag is added only to types that support tags.
+* Improved: processed or excluded content keeps its editor box and restore action even if its type is removed from the settings.
+* Settings are migrated automatically: the selected categories become the "Articoli" configuration.
 
 = 2.5.0 =
 * New: Articoli tab with a preview of the next run, processed posts and excluded posts.
@@ -136,6 +149,9 @@ Versions up to 2.3.1 saved the Rank Math robots setting in a format Rank Math co
 * Full refactoring for WordPress.org approval
 
 == Upgrade Notice ==
+
+= 2.6.0 =
+Custom post type support with per-type taxonomy filter. Your category settings are migrated automatically.
 
 = 2.5.0 =
 New Articoli tab with preview and "Run now", per-post exclusion and restore, WP-CLI commands.

@@ -27,6 +27,9 @@ function icrea_deindex_admin_assets( $hook_suffix ) {
 	if ( 'toplevel_page_icrea-deindex-articoli' === $hook_suffix || 'index.php' === $hook_suffix ) {
 		wp_enqueue_style( 'icrea-deindex-admin', ICREA_DEINDEX_PLUGIN_URL . 'admin/admin.css', array(), ICREA_DEINDEX_VERSION );
 	}
+	if ( 'toplevel_page_icrea-deindex-articoli' === $hook_suffix ) {
+		wp_enqueue_script( 'icrea-deindex-admin', ICREA_DEINDEX_PLUGIN_URL . 'admin/admin.js', array(), ICREA_DEINDEX_VERSION, true );
+	}
 }
 add_action( 'admin_enqueue_scripts', 'icrea_deindex_admin_assets' );
 
@@ -40,8 +43,8 @@ function icrea_deindex_handle_save() {
 	check_admin_referer( 'icrea_deindex_save', 'icrea_deindex_nonce' );
 
 	// phpcs:disable WordPress.Security.NonceVerification.Missing -- nonce verificato sopra.
-	$category_ids = isset( $_POST['icrea_deindex_category_ids'] ) ? array_values( array_filter( array_map( 'absint', (array) wp_unslash( $_POST['icrea_deindex_category_ids'] ) ) ) ) : array();
-	update_option( 'icrea_deindex_category_ids', $category_ids );
+	$posted = isset( $_POST['icrea_deindex_targets'] ) && is_array( $_POST['icrea_deindex_targets'] ) ? wp_unslash( $_POST['icrea_deindex_targets'] ) : array(); // phpcs:ignore WordPress.Security.ValidatedSanitizedInput.InputNotSanitized -- ogni valore è validato qui sotto.
+	update_option( 'icrea_deindex_targets', icrea_deindex_sanitize_targets( $posted ) );
 
 	update_option( 'icrea_deindex_days', max( 1, intval( wp_unslash( $_POST['icrea_deindex_days'] ?? 7 ) ) ) );
 	update_option( 'icrea_deindex_archive_days', max( 0, intval( wp_unslash( $_POST['icrea_deindex_archive_days'] ?? 0 ) ) ) );
@@ -126,7 +129,7 @@ function icrea_deindex_handle_run() {
 		'tab'  => 'posts',
 	);
 
-	if ( ! icrea_deindex_get_category_ids() ) {
+	if ( ! icrea_deindex_get_targets() ) {
 		$args['run'] = 'nocat';
 	} elseif ( get_transient( 'icrea_deindex_running' ) ) {
 		$args['run'] = 'busy';
@@ -155,7 +158,7 @@ function icrea_deindex_render_run_notice() {
 	// phpcs:disable WordPress.Security.NonceVerification.Recommended -- solo visualizzazione dell'esito.
 	$run = isset( $_GET['run'] ) ? sanitize_key( wp_unslash( $_GET['run'] ) ) : '';
 	if ( 'nocat' === $run ) {
-		echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html__( 'Nessuna categoria selezionata: non c\'è nulla da elaborare.', 'deindicizzazione-automatica-articoli' ) . '</p></div>';
+		echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html__( 'Nessun contenuto configurato: non c\'è nulla da elaborare.', 'deindicizzazione-automatica-articoli' ) . '</p></div>';
 	} elseif ( 'busy' === $run ) {
 		echo '<div class="notice notice-warning is-dismissible"><p>' . esc_html__( 'Un\'esecuzione è già in corso. Riprova tra qualche minuto.', 'deindicizzazione-automatica-articoli' ) . '</p></div>';
 	} elseif ( 'done' === $run ) {
@@ -206,7 +209,7 @@ function icrea_deindex_render_posts_tab() {
 	// Anteprima.
 	echo '<h2>' . esc_html__( 'Anteprima della prossima esecuzione', 'deindicizzazione-automatica-articoli' ) . '</h2>';
 	if ( null === $preview ) {
-		echo '<p>' . esc_html__( 'Nessuna categoria selezionata: seleziona almeno una categoria nelle impostazioni.', 'deindicizzazione-automatica-articoli' ) . '</p>';
+		echo '<p>' . esc_html__( 'Nessun contenuto configurato: scegli nelle impostazioni cosa elaborare.', 'deindicizzazione-automatica-articoli' ) . '</p>';
 	} else {
 		$batch = max( 1, (int) apply_filters( 'icrea_deindex_batch_size', 200 ) );
 
@@ -274,6 +277,7 @@ function icrea_deindex_render_posts_table( $ids, $mode, $total ) {
 
 	$date_format = get_option( 'date_format' );
 	$statuses    = get_post_statuses();
+	$targets     = icrea_deindex_get_targets();
 
 	echo '<table class="widefat striped icrea-posts-table"><thead><tr>';
 	echo '<th>' . esc_html__( 'Titolo', 'deindicizzazione-automatica-articoli' ) . '</th>';
@@ -283,7 +287,8 @@ function icrea_deindex_render_posts_table( $ids, $mode, $total ) {
 		echo '<th>' . esc_html__( 'Noindex', 'deindicizzazione-automatica-articoli' ) . '</th>';
 		echo '<th>' . esc_html__( 'Archiviato', 'deindicizzazione-automatica-articoli' ) . '</th>';
 	} else {
-		echo '<th>' . esc_html__( 'Categorie', 'deindicizzazione-automatica-articoli' ) . '</th>';
+		echo '<th>' . esc_html__( 'Tipo', 'deindicizzazione-automatica-articoli' ) . '</th>';
+		echo '<th>' . esc_html__( 'Termini', 'deindicizzazione-automatica-articoli' ) . '</th>';
 	}
 	echo '<th>' . esc_html__( 'Azioni', 'deindicizzazione-automatica-articoli' ) . '</th>';
 	echo '</tr></thead><tbody>';
@@ -304,7 +309,12 @@ function icrea_deindex_render_posts_table( $ids, $mode, $total ) {
 			echo '<td>' . ( $state['noindexed'] ? esc_html( wp_date( $date_format, $state['noindexed'] ) ) : '&mdash;' ) . '</td>';
 			echo '<td>' . ( $state['archived'] ? esc_html( wp_date( $date_format, $state['archived'] ) ) : '&mdash;' ) . '</td>';
 		} else {
-			echo '<td>' . esc_html( implode( ', ', wp_list_pluck( get_the_category( $post_id ), 'name' ) ) ) . '</td>';
+			$post_type = get_post_type( $post_id );
+			$type_obj  = get_post_type_object( $post_type );
+			$taxonomy  = isset( $targets[ $post_type ] ) ? $targets[ $post_type ]['taxonomy'] : '';
+			$terms     = '' !== $taxonomy ? get_the_terms( $post_id, $taxonomy ) : false;
+			echo '<td>' . esc_html( $type_obj ? $type_obj->labels->singular_name : $post_type ) . '</td>';
+			echo '<td>' . ( is_array( $terms ) ? esc_html( implode( ', ', wp_list_pluck( $terms, 'name' ) ) ) : '&mdash;' ) . '</td>';
 		}
 
 		echo '<td>';
@@ -420,7 +430,6 @@ function icrea_deindex_render_logs_tab() {
  * Scheda Impostazioni.
  */
 function icrea_deindex_render_settings_tab() {
-	$category_ids     = icrea_deindex_get_category_ids();
 	$days             = absint( get_option( 'icrea_deindex_days', 7 ) );
 	$archive_days     = absint( get_option( 'icrea_deindex_archive_days', 0 ) );
 	$archive_status   = icrea_deindex_get_archive_status();
@@ -447,20 +456,7 @@ function icrea_deindex_render_settings_tab() {
 	echo '<div class="icrea-settings-section">';
 	echo '<h3>' . esc_html__( 'Impostazioni di base', 'deindicizzazione-automatica-articoli' ) . '</h3>';
 
-	echo '<div class="icrea-field-group"><fieldset>';
-	echo '<legend><strong>' . esc_html__( 'Categorie da deindicizzare', 'deindicizzazione-automatica-articoli' ) . '</strong></legend>';
-	$all_categories = get_categories( array( 'hide_empty' => false ) );
-	if ( $all_categories ) {
-		echo '<div class="icrea-checklist">';
-		foreach ( $all_categories as $category ) {
-			echo '<label><input type="checkbox" name="icrea_deindex_category_ids[]" value="' . esc_attr( $category->term_id ) . '" ' . checked( in_array( (int) $category->term_id, $category_ids, true ), true, false ) . '> ' . esc_html( $category->name ) . '</label>';
-		}
-		echo '</div>';
-		echo '<p class="description">' . esc_html__( 'Sono incluse anche le sottocategorie.', 'deindicizzazione-automatica-articoli' ) . '</p>';
-	} else {
-		echo '<p>' . esc_html__( 'Nessuna categoria trovata.', 'deindicizzazione-automatica-articoli' ) . '</p>';
-	}
-	echo '</fieldset></div>';
+	icrea_deindex_render_targets_field();
 
 	echo '<div class="icrea-field-group">';
 	echo '<label for="icrea_deindex_days"><strong>' . esc_html__( 'Giorni prima di noindex', 'deindicizzazione-automatica-articoli' ) . '</strong></label>';
@@ -563,4 +559,152 @@ function icrea_deindex_render_settings_tab() {
 
 	submit_button( __( 'Salva impostazioni', 'deindicizzazione-automatica-articoli' ) );
 	echo '</form>';
+}
+
+/**
+ * Valida la configurazione inviata dal form: solo tipi pubblici, tassonomie del tipo e termini esistenti.
+ *
+ * @param array $posted Dati del form (già senza slash).
+ * @return array
+ */
+function icrea_deindex_sanitize_targets( $posted ) {
+	$targets = array();
+	foreach ( icrea_deindex_available_post_types() as $post_type => $type ) {
+		if ( empty( $posted[ $post_type ]['enabled'] ) ) {
+			continue;
+		}
+		$taxonomy = isset( $posted[ $post_type ]['taxonomy'] ) ? sanitize_key( $posted[ $post_type ]['taxonomy'] ) : '';
+		if ( '__all__' === $taxonomy ) {
+			$targets[ $post_type ] = array(
+				'taxonomy' => '',
+				'terms'    => array(),
+			);
+			continue;
+		}
+		if ( ! array_key_exists( $taxonomy, icrea_deindex_available_taxonomies( $post_type ) ) ) {
+			continue;
+		}
+		$terms = array();
+		$ids   = isset( $posted[ $post_type ]['terms'][ $taxonomy ] ) ? (array) $posted[ $post_type ]['terms'][ $taxonomy ] : array();
+		foreach ( array_map( 'absint', $ids ) as $term_id ) {
+			$term = $term_id ? get_term( $term_id, $taxonomy ) : null;
+			if ( $term && ! is_wp_error( $term ) ) {
+				$terms[] = (int) $term->term_id;
+			}
+		}
+		$targets[ $post_type ] = array(
+			'taxonomy' => $taxonomy,
+			'terms'    => array_values( array_unique( $terms ) ),
+		);
+	}
+	return $targets;
+}
+
+/**
+ * Numero massimo di termini elencati per tassonomia nelle impostazioni.
+ *
+ * @return int
+ */
+function icrea_deindex_terms_limit() {
+	return max( 50, (int) apply_filters( 'icrea_deindex_terms_limit', 1000 ) );
+}
+
+/**
+ * Campo "Contenuti da elaborare": per ogni tipo pubblico, attivazione, tassonomia e termini.
+ */
+function icrea_deindex_render_targets_field() {
+	$saved = icrea_deindex_get_saved_targets();
+
+	echo '<div class="icrea-field-group"><fieldset>';
+	echo '<legend><strong>' . esc_html__( 'Contenuti da elaborare', 'deindicizzazione-automatica-articoli' ) . '</strong></legend>';
+	echo '<p class="description">' . esc_html__( 'Per ogni tipo di contenuto scegli se elaborarlo e con quale filtro: una tassonomia (categorie, tag o tassonomie personalizzate, sottocategorie incluse) oppure tutti i contenuti del tipo.', 'deindicizzazione-automatica-articoli' ) . '</p>';
+
+	foreach ( icrea_deindex_available_post_types() as $post_type => $type ) {
+		$taxonomies = icrea_deindex_available_taxonomies( $post_type );
+		$enabled    = isset( $saved[ $post_type ] );
+		if ( $enabled ) {
+			$selected = '' === $saved[ $post_type ]['taxonomy'] ? '__all__' : $saved[ $post_type ]['taxonomy'];
+		} elseif ( isset( $taxonomies['category'] ) ) {
+			$selected = 'category';
+		} else {
+			$selected = $taxonomies ? (string) key( $taxonomies ) : '__all__';
+		}
+		$selected_terms = $enabled ? $saved[ $post_type ]['terms'] : array();
+		$name           = 'icrea_deindex_targets[' . $post_type . ']';
+
+		echo '<div class="icrea-target' . ( $enabled ? ' is-enabled' : '' ) . '" data-post-type="' . esc_attr( $post_type ) . '">';
+		echo '<label class="icrea-target-toggle"><input type="checkbox" name="' . esc_attr( $name . '[enabled]' ) . '" value="1" ' . checked( $enabled, true, false ) . '> <strong>' . esc_html( $type->labels->name ) . '</strong> <code>' . esc_html( $post_type ) . '</code></label>';
+
+		echo '<div class="icrea-target-options">';
+		echo '<label>' . esc_html__( 'Filtra per', 'deindicizzazione-automatica-articoli' ) . ' <select class="icrea-target-taxonomy" name="' . esc_attr( $name . '[taxonomy]' ) . '">';
+		foreach ( $taxonomies as $slug => $taxonomy ) {
+			echo '<option value="' . esc_attr( $slug ) . '" ' . selected( $selected, $slug, false ) . '>' . esc_html( $taxonomy->labels->name ) . '</option>';
+		}
+		echo '<option value="__all__" ' . selected( $selected, '__all__', false ) . '>' . esc_html__( 'Tutti i contenuti (nessun filtro)', 'deindicizzazione-automatica-articoli' ) . '</option>';
+		echo '</select></label>';
+
+		foreach ( $taxonomies as $slug => $taxonomy ) {
+			echo '<div class="icrea-checklist icrea-target-terms" data-taxonomy="' . esc_attr( $slug ) . '"' . ( $slug === $selected ? '' : ' data-inactive="1"' ) . '>';
+			echo '<em class="icrea-terms-title">' . esc_html( $taxonomy->labels->name ) . '</em>';
+			$terms = get_terms(
+				array(
+					'taxonomy'   => $slug,
+					'hide_empty' => false,
+					'number'     => icrea_deindex_terms_limit(),
+					'orderby'    => 'name',
+				)
+			);
+			if ( is_wp_error( $terms ) || ! $terms ) {
+				echo '<p>' . esc_html__( 'Nessun termine.', 'deindicizzazione-automatica-articoli' ) . '</p>';
+			} else {
+				icrea_deindex_render_terms_checklist( $terms, $name . '[terms][' . $slug . '][]', $slug === $selected ? $selected_terms : array() );
+				if ( count( $terms ) >= icrea_deindex_terms_limit() ) {
+					/* translators: %d: numero di termini */
+					echo '<p class="description">' . esc_html( sprintf( __( 'Sono elencati solo i primi %d termini.', 'deindicizzazione-automatica-articoli' ), icrea_deindex_terms_limit() ) ) . '</p>';
+				}
+			}
+			echo '</div>';
+		}
+		echo '</div>';
+		echo '</div>';
+	}
+
+	echo '</fieldset></div>';
+}
+
+/**
+ * Elenco di termini con caselle, in ordine gerarchico.
+ *
+ * @param WP_Term[] $terms    Termini.
+ * @param string    $name     Nome del campo.
+ * @param int[]     $selected ID selezionati.
+ */
+function icrea_deindex_render_terms_checklist( $terms, $name, $selected ) {
+	$by_parent = array();
+	$ids       = wp_list_pluck( $terms, 'term_id' );
+	foreach ( $terms as $term ) {
+		// Un termine il cui genitore non è nell'elenco viene mostrato al primo livello.
+		$parent                 = in_array( $term->parent, $ids, true ) ? (int) $term->parent : 0;
+		$by_parent[ $parent ][] = $term;
+	}
+	icrea_deindex_render_terms_level( $by_parent, 0, 0, $name, $selected );
+}
+
+/**
+ * Un livello dell'elenco gerarchico dei termini.
+ *
+ * @param array  $by_parent Termini per genitore.
+ * @param int    $parent    Genitore.
+ * @param int    $depth     Profondità.
+ * @param string $name      Nome del campo.
+ * @param int[]  $selected  ID selezionati.
+ */
+function icrea_deindex_render_terms_level( $by_parent, $parent, $depth, $name, $selected ) {
+	if ( empty( $by_parent[ $parent ] ) || $depth > 10 ) {
+		return;
+	}
+	foreach ( $by_parent[ $parent ] as $term ) {
+		echo '<label style="padding-left:' . esc_attr( (string) ( $depth * 16 ) ) . 'px"><input type="checkbox" name="' . esc_attr( $name ) . '" value="' . esc_attr( $term->term_id ) . '" ' . checked( in_array( (int) $term->term_id, $selected, true ), true, false ) . '> ' . esc_html( $term->name ) . '</label>';
+		icrea_deindex_render_terms_level( $by_parent, (int) $term->term_id, $depth + 1, $name, $selected );
+	}
 }
