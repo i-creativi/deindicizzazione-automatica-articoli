@@ -2,9 +2,9 @@
 Contributors: icreativi
 Tags: seo, deindex, rank math, yoast, articoli, archivio
 Requires at least: 5.0
-Tested up to: 6.8
+Tested up to: 7.1
 Requires PHP: 7.2
-Stable tag: 2.3
+Stable tag: 2.3.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -51,6 +51,10 @@ Attivando questa opzione, il plugin eseguirà tutte le operazioni normalmente ma
 3. Dashboard widget con prossime azioni
 
 == Changelog ==
+= 2.3.1 =
+* Prima pubblicazione su WordPress.org delle funzionalità 2.3 (le versioni .org precedenti erano ferme alla 2.2)
+* Aggiornato "Tested up to" a WordPress 7.1
+
 = 2.3 =
 * Aggiunto supporto multi-categoria
 * Aggiunta modalità archiviazione (cambio stato articoli)

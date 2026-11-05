@@ -3,7 +3,7 @@
  * Plugin Name: Deindicizzazione Automatica Articoli
  * Plugin URI: https://www.i-creativi.com/plugin/deindicizzazione-articoli
  * Description: Plugin per deindicizzare e archiviare automaticamente articoli di categorie specifiche dopo X giorni, con supporto multi-categoria, email personalizzate, log e dashboard.
- * Version: 2.3
+ * Version: 2.3.1
  * Author: I-Creativi
  * Author URI: https://www.i-creativi.com/
  * License: GPLv2 or later
@@ -14,7 +14,7 @@
 if ( ! defined( 'ABSPATH' ) ) exit; // Exit if accessed directly
 
 // Definizione costanti
-define('ICREA_DEINDEX_VERSION', '2.3');
+define('ICREA_DEINDEX_VERSION', '2.3.1');
 define('ICREA_DEINDEX_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('ICREA_DEINDEX_PLUGIN_URL', plugin_dir_url(__FILE__));
 

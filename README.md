@@ -103,6 +103,10 @@ Il plugin è ottimizzato per funzionare con Rank Math e Yoast SEO. La funzionali
 
 ## Changelog
 
+### 2.3.1
+- Prima pubblicazione su WordPress.org delle funzionalità 2.3 (le versioni .org precedenti erano ferme alla 2.2)
+- Aggiornato "Tested up to" a WordPress 7.1
+
 ### 2.3
 - Aggiunto supporto multi-categoria
 - Aggiunta modalità archiviazione (cambio stato articoli)
